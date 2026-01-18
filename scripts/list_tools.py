@@ -4,7 +4,8 @@
 tools = [
     ("check_zotero_status", "Check Zotero connection status"),
     ("get_zotero_collections", "Get all Zotero collections"),
-    ("save_paper_to_zotero", "Save a paper to Zotero"),
+    ("save_paper_to_zotero", "Save a paper by URL (arXiv, DOI, etc.)"),
+    ("save_paper_by_doi", "Save a paper by DOI (recommended for reliable metadata)"),
     ("create_zotero_collection", "Create a new collection"),
     ("extract_arxiv_metadata", "Extract arXiv metadata"),
     ("set_database_cookies", "Set database authentication cookies"),
@@ -13,7 +14,6 @@ tools = [
     ("update_database_cookies", "Update database cookies"),
     ("test_database_access", "Test database access"),
     ("get_cookie_guide", "Get cookie acquisition guide"),
-    ("get_cookie_sync_status", "Get cookie sync status"),
     ("get_database_auth_status", "Get authentication status"),
     ("get_authentication_guide", "Get authentication guide"),
     ("generate_bookmark_code", "Generate bookmarklet code"),

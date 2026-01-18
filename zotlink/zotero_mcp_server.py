@@ -31,16 +31,16 @@ from mcp.server import NotificationOptions, Server
 from mcp import ClientSession
 from mcp.server.stdio import stdio_server
 
-# 本地导入
+# Local imports
 from .zotero_integration import ZoteroConnector
 from .cookie_sync import CookieSyncManager
 
-# 配置日志 - 写入到用户目录，避免只读安装路径
+# Configure logging - write to user directory to avoid read-only install paths
 log_dir = Path.home() / '.zotlink'
 log_dir.mkdir(parents=True, exist_ok=True)
 log_file = log_dir / 'zotlink.log'
 
-# Windows 控制台常见 GBK 编码问题：仅向文件写日志，避免控制台 emoji 编码错误
+# Windows console common GBK encoding issues: only write to file to avoid emoji encoding errors
 handlers = [logging.FileHandler(log_file, encoding='utf-8')]
 if sys.platform != 'win32':
     handlers.append(logging.StreamHandler(sys.stderr))
@@ -53,43 +53,42 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# 全局Zotero连接器
+# Global Zotero connector
 zotero_connector = ZoteroConnector()
 
-# 自动从文件加载可用的cookies
-logger.info("🔄 正在加载共享的cookies...")
+# Auto-load available cookies from files
+logger.info("Loading shared cookies...")
 cookie_results = zotero_connector.load_cookies_from_files()
 if cookie_results:
     success_count = sum(1 for v in cookie_results.values() if v)
     total_count = len(cookie_results)
-    logger.info(f"📊 Cookie加载完成：{success_count}/{total_count} 个数据库")
+    logger.info(f"Cookie loading complete: {success_count}/{total_count} databases")
 else:
-    logger.info("📄 暂无可用的共享cookies")
+    logger.info("No shared cookies available")
 
-# 初始化Cookie同步管理器
+# Initialize cookie sync manager
 cookie_sync_manager = CookieSyncManager(zotero_connector=zotero_connector)
 
-# 🔄 同步已加载的cookies到CookieSyncManager
-logger.info("🔄 同步已加载的cookies状态...")
+# Sync loaded cookies to CookieSyncManager
+logger.info("Syncing loaded cookies status...")
 if zotero_connector.extractor_manager and zotero_connector.extractor_manager.cookies_store:
     for db_name, cookies in zotero_connector.extractor_manager.cookies_store.items():
         if cookies and cookies.strip():
-            # 将cookies同步到CookieSyncManager的数据库注册表
             cookie_sync_manager.database_registry.update_cookie_status(db_name, cookies)
-            logger.info(f"✅ 同步{db_name}的cookies状态到认证管理器")
+            logger.info(f"Synced {db_name} cookies status to auth manager")
 
 cookie_sync_manager.start()
 
-# 创建MCP服务器
+# Create MCP server
 server = Server("zotlink")
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    """列出所有可用的Zotero工具"""
+    """List all available Zotero tools"""
     return [
         types.Tool(
             name="check_zotero_status",
-            description="检查Zotero桌面应用的连接状态和版本信息",
+            description="Check connection status and version info for Zotero desktop app",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -98,7 +97,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_zotero_collections",
-            description="获取Zotero文献库中的所有集合/文件夹列表（树形结构显示）",
+            description="Get all collections/folders from your Zotero library (tree structure)",
             inputSchema={
                 "type": "object", 
                 "properties": {},
@@ -107,39 +106,57 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="save_paper_to_zotero",
-            description="保存学术论文到Zotero（支持arXiv、DOI等，自动下载PDF和提取元数据）",
+            description="Save a paper to Zotero from a URL (arXiv, DOI, etc.). Automatically fetches metadata and PDF",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "paper_url": {
                         "type": "string",
-                        "description": "论文URL（支持arXiv、DOI链接等）"
+                        "description": "Paper URL (supports arXiv, DOI links, etc.)"
                     },
                     "paper_title": {
                         "type": "string", 
-                        "description": "论文标题（可选，会自动提取）"
+                        "description": "Paper title (optional, will be auto-extracted)"
                     },
                     "collection_key": {
                         "type": "string",
-                        "description": "目标集合key（可选，不指定则保存到默认位置）"
+                        "description": "Target collection key (optional, saves to default location)"
                     }
                 },
                 "required": ["paper_url"]
             }
         ),
         types.Tool(
+            name="save_paper_by_doi",
+            description="Save a paper to Zotero by DOI. Supports arXiv DOIs (10.48550/arXiv.XXX) and published DOIs",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "doi": {
+                        "type": "string",
+                        "description": "DOI string (e.g., '10.48550/arXiv.2301.00001' or '10.1038/s41586-023-03758-y')"
+                    },
+                    "collection_key": {
+                        "type": "string",
+                        "description": "Target collection key (optional, saves to default location)"
+                    }
+                },
+                "required": ["doi"]
+            }
+        ),
+        types.Tool(
             name="create_zotero_collection",
-            description="在Zotero中创建新的集合/文件夹（提供手动创建指导）",
+            description="Create a new collection/folder in Zotero for organizing papers",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "集合名称"
+                        "description": "Collection name"
                     },
                     "parent_key": {
                         "type": "string",
-                        "description": "父集合key（可选）"
+                        "description": "Parent collection key (optional, for nested collections)"
                     }
                 },
                 "required": ["name"]
@@ -147,144 +164,21 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="extract_arxiv_metadata",
-            description="从arXiv URL提取完整的论文元数据（标题、作者、摘要、Comment、学科分类等）",
+            description="Extract complete metadata from an arXiv URL (title, authors, abstract, subjects, etc.)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "arxiv_url": {
                         "type": "string",
-                        "description": "arXiv论文URL（abs或pdf页面）"
+                        "description": "arXiv URL (abs or pdf page)"
                     }
                 },
                 "required": ["arxiv_url"]
             }
         ),
         types.Tool(
-            name="set_database_cookies",
-            description="为特定学术数据库设置认证cookies（如Nature、Science等）",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "database_name": {
-                        "type": "string",
-                        "description": "数据库名称（如Nature、Science等）"
-                    },
-                    "cookies": {
-                        "type": "string",
-                        "description": "从浏览器复制的cookie字符串"
-                    }
-                },
-                "required": ["database_name", "cookies"]
-            }
-        ),
-        types.Tool(
-            name="get_supported_databases",
-            description="获取所有支持的学术数据库列表及其认证状态",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="get_databases_status",
-            description="获取所有数据库的详细状态信息（包括登录URL、测试URL等）",
-            inputSchema={
-                "type": "object", 
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="update_database_cookies", 
-            description="更新指定数据库的Cookie配置（支持nature、science、ieee、springer等）",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "database": {
-                        "type": "string",
-                        "description": "数据库标识 (nature, science, ieee, springer)"
-                    },
-                    "cookies": {
-                        "type": "string",
-                        "description": "Cookie字符串，格式: name1=value1; name2=value2; name3=value3"
-                    }
-                },
-                "required": ["database", "cookies"]
-            }
-        ),
-        types.Tool(
-            name="test_database_access",
-            description="测试特定数据库的访问权限和认证状态",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "database_name": {
-                        "type": "string",
-                        "description": "要测试的数据库名称（如Nature、Science等）"
-                    }
-                },
-                "required": ["database_name"]
-            }
-        ),
-        types.Tool(
-            name="get_cookie_guide",
-            description="获取详细的cookie获取指南（用于访问商业数据库）",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "database_name": {
-                        "type": "string",
-                        "description": "数据库名称（可选，如Nature、Science等）"
-                    }
-                },
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="get_cookie_sync_status",
-            description="获取Cookie自动同步服务的状态信息",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="get_database_auth_status",
-            description="获取所有支持数据库的认证状态",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="get_authentication_guide",
-            description="获取指定数据库的详细认证指南",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "database": {
-                        "type": "string",
-                        "description": "数据库标识符（如nature、science、ieee等）"
-                    }
-                },
-                "required": ["database"]
-            }
-        ),
-        types.Tool(
-            name="generate_bookmark_code",
-            description="Generate ZotLink bookmark code for browser cookie sync",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
             name="get_library_items",
-            description="Get items from your Zotero library",
+            description="Get items from your Zotero library with pagination support",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -302,7 +196,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="search_zotero_items",
-            description="Search for items in your Zotero library",
+            description="Search for items in your Zotero library by keyword or phrase",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -316,7 +210,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_zotero_item",
-            description="Get a specific Zotero item by its key",
+            description="Get detailed information about a specific Zotero item by its key",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -330,7 +224,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="update_zotero_item",
-            description="Update an existing Zotero item's metadata (title, abstract, date, etc.)",
+            description="Update an existing Zotero item's metadata (title, abstract, date, URL, etc.)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -360,7 +254,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="update_zotero_item_tags",
-            description="Update tags on an existing Zotero item",
+            description="Update or replace tags on an existing Zotero item",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -411,7 +305,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="search_arxiv_api",
-            description="Search arXiv using the official API (supports ti:, au:, abs: prefixes)",
+            description="Search arXiv using the official API. Use prefixes: ti: (title), au: (author), abs: (abstract)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -429,7 +323,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="validate_zotero_item",
-            description="Validate a Zotero item against arXiv API data. If the item has a DOI, fetches arXiv metadata and compares it with the current Zotero entry, showing all differences.",
+            description="Validate a Zotero item against arXiv metadata. Shows differences between Zotero entry and arXiv data",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -443,7 +337,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="validate_and_update_item",
-            description="Validate a Zotero item against arXiv API and optionally update it with corrected metadata from arXiv.",
+            description="Validate a Zotero item against arXiv and optionally update it with corrected metadata",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -461,7 +355,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fetch_pdf",
-            description="Fetch PDF for a Zotero item from open access sources (arXiv, PubMed, DOAJ, etc.), Sci-Hub, or Anna's Archive. Returns PDF content as base64-encoded data.",
+            description="Fetch PDF for a Zotero item from open access sources (arXiv, PubMed, DOAJ, etc.)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -486,25 +380,25 @@ async def handle_list_tools() -> list[types.Tool]:
 
 @server.list_resources()
 async def handle_list_resources() -> list[types.Resource]:
-    """列出可用资源"""
+    """List available resources"""
     return [
         types.Resource(
             uri="zotero://status",
-            name="Zotero连接状态",
-            description="当前Zotero桌面应用的连接状态",
+            name="Zotero Connection Status",
+            description="Current Zotero desktop app connection status",
             mimeType="application/json"
         ),
         types.Resource(
             uri="zotero://collections",
-            name="Zotero集合列表", 
-            description="用户Zotero文献库中的所有集合",
+            name="Zotero Collection List", 
+            description="All collections in your Zotero library",
             mimeType="application/json"
         )
     ]
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    """处理工具调用"""
+    """Handle tool calls"""
     
     if name == "check_zotero_status":
         try:
@@ -517,45 +411,34 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 message = "Zotero Connection Successful!\n\n"
                 message += f"App Status: Zotero desktop is running\n"
                 message += f"Version Info: {version}\n"
-                message += f"Collection Count: {collections_count} 个\n"
+                message += f"Collection Count: {collections_count}\n"
                 message += f"API Endpoint: http://127.0.0.1:23119\n\n"
-                # 获取支持的数据库
-                databases = zotero_connector.get_supported_databases()
-                
-                message += f"Supported Databases ({len(databases)}个):\n"
-                for db in databases:
-                    db_name = db.get('name', '未知')
-                    auth_icon = "🔐" if db.get('requires_auth', False) else "🌐"
-                    cookie_icon = "✅" if db.get('has_cookies', False) else "❌" if db.get('requires_auth', False) else "➖"
-                    message += f"  {auth_icon} **{db_name}** {cookie_icon}\n"
-                
-                message += f"\nAvailable Features:\n"
-                message += f"  🎯 `save_paper_to_zotero` - 保存学术论文\n"
-                message += f"  📚 `get_zotero_collections` - 查看集合列表\n"
-                message += f"  🔬 `extract_arxiv_metadata` - arXiv元数据提取\n"
-                message += f"  🌐 `get_supported_databases` - 查看支持的数据库\n"
-                message += f"  🔐 `set_database_cookies` - 设置数据库认证\n"
-                message += f"  🧪 `test_database_access` - Test database access\n"
-                message += f"  ➕ `create_zotero_collection` - 创建新集合\n\n"
-                message += f"Getting Started: 查看支持的数据库并保存学术文献！"
+                message += f"Available Tools:\n"
+                message += f"  save_paper_to_zotero - Save academic papers\n"
+                message += f"  get_zotero_collections - View collections\n"
+                message += f"  extract_arxiv_metadata - Extract arXiv metadata\n"
+                message += f"  create_zotero_collection - Create new collection\n"
+                message += f"  search_arxiv_api - Search arXiv\n"
+                message += f"  And more...\n\n"
+                message += f"Getting Started: View your collections and save academic papers!"
             else:
                 message = "Zotero Not Running\n\n"
                 message += f"Solutions:\n"
-                message += f"1. 启动Zotero桌面应用\n"
-                message += f"2. 确保Zotero完全加载完成\n"
-                message += f"3. 重新运行此检查\n\n"
-                message += f"Requirements: 需要Zotero 6.0以上版本"
+                message += f"1. Start Zotero desktop application\n"
+                message += f"2. Ensure Zotero is fully loaded\n"
+                message += f"3. Run this check again\n\n"
+                message += f"Requirements: Zotero 6.0 or newer"
             
             return [types.TextContent(type="text", text=message)]
             
         except Exception as e:
-            logger.error(f"检查Zotero状态失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 检查Zotero状态时出错: {e}")]
+            logger.error(f"Failed to check Zotero status: {e}")
+            return [types.TextContent(type="text", text=f"Error checking Zotero status: {e}")]
     
     elif name == "get_zotero_collections":
         try:
             if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="❌ Zotero不可用，请启动Zotero桌面应用")]
+                return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
             
             collections = zotero_connector.get_collections()
             
@@ -563,27 +446,23 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 message = "Collection Management\n\n"
                 message += "No collections found\n\n"
                 message += "Suggestions:\n"
-                message += "• 使用 `create_zotero_collection` 创建新集合\n"
-                message += "• 或在Zotero桌面应用中手动创建集合"
+                message += "  Use create_zotero_collection to create a new collection\n"
+                message += "  Or manually create collections in Zotero desktop app"
                 return [types.TextContent(type="text", text=message)]
             
-            # 构建集合树形结构显示
-            message = f"Zotero Collection List (共{len(collections)}个)\n\n"
+            message = f"Zotero Collection List ({len(collections)} total)\n\n"
             
-            # 构建层级结构
             root_collections = [c for c in collections if not c.get('parentCollection')]
             child_collections = [c for c in collections if c.get('parentCollection')]
             
             def format_collection(coll, level=0):
                 indent = "  " * level
                 name = coll.get('name', 'Unknown Collection')
-                key = coll.get('key', '无key')
+                key = coll.get('key', 'no key')
                 
-                # 显示带emoji和层级的集合名称
-                formatted = f"{indent}📁 **{name}**\n"
-                formatted += f"{indent}   🔑 Key: `{key}`\n"
+                formatted = f"{indent}  {name}\n"
+                formatted += f"{indent}    Key: {key}\n"
                 
-                # 查找子集合
                 children = [c for c in child_collections if c.get('parentCollection') == coll.get('id')]
                 for child in children:
                     formatted += format_collection(child, level + 1)
@@ -593,16 +472,16 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             for root_coll in root_collections:
                 message += format_collection(root_coll)
             
-            message += f"\n💡 Usage:\n"
-            message += f"• 复制集合的Key值\n"
-            message += f"• 在 `save_paper_to_zotero` 中指定 `collection_key`\n"
-            message += f"• 论文将自动保存到指定集合中"
+            message += f"\nUsage:\n"
+            message += f"  Copy the collection Key value\n"
+            message += f"  Specify collection_key in save_paper_to_zotero\n"
+            message += f"  Papers will be automatically saved to the specified collection"
             
             return [types.TextContent(type="text", text=message)]
             
         except Exception as e:
-            logger.error(f"获取集合列表失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 获取集合列表失败: {e}")]
+            logger.error(f"Failed to get collections: {e}")
+            return [types.TextContent(type="text", text=f"Failed to get collections: {e}")]
     
     elif name == "save_paper_to_zotero":
         paper_url = arguments.get("paper_url")
@@ -610,191 +489,229 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
         collection_key = arguments.get("collection_key")
         
         if not paper_url:
-            return [types.TextContent(type="text", text="❌ 缺少论文URL")]
+            return [types.TextContent(type="text", text="Missing paper URL")]
         
         if not zotero_connector.is_running():
-            return [types.TextContent(type="text", text="❌ Zotero不可用，请启动Zotero桌面应用")]
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
         
         try:
-            # 构建论文信息
             paper_info = {
                 "title": paper_title,
                 "url": paper_url
             }
             
-            # 处理进度提示
             if 'arxiv.org' in paper_url:
-                logger.info("开始处理arXiv论文")
+                logger.info("Processing arXiv paper")
             
             result = zotero_connector.save_item_to_zotero(paper_info, collection_key=collection_key)
             
             if result["success"]:
-                message = f"🎉 **论文保存成功！**\n\n"
+                message = f"Paper saved successfully!\n\n"
                 
-                # 显示使用的数据库
-                database = result.get("database", "未知")
+                database = result.get("database", "Unknown")
                 enhanced = result.get("enhanced", False)
                 
-                message += f"🔗 **数据库**: {database}\n"
-                message += f"🤖 **智能增强**: {'✅ 是' if enhanced else '➖ 否'}\n"
+                message += f"Source: {database}\n"
+                message += f"Metadata enhanced: {'Yes' if enhanced else 'No'}\n"
                 
-                # 🎯 根据URL检测论文来源和类型
                 import re
                 
-                # arXiv论文特殊处理
                 if 'arxiv.org' in paper_url:
                     arxiv_match = re.search(r'arxiv\.org/(abs|pdf)/([^/?]+)', paper_url)
                     if arxiv_match:
                         arxiv_id = arxiv_match.group(2)
-                        message += f"📄 **论文类型**: arXiv预印本\n"
-                        message += f"🏷️ **arXiv ID**: {arxiv_id}\n"
-                        # 🎯 优先使用返回结果中的标题，如果没有则使用原始标题
-                        actual_title = result.get('title') or paper_title or f'arXiv:{arxiv_id} (标题提取中...)'
-                        message += f"📄 **标题**: {actual_title}\n"
-                        message += f"🔗 **原始链接**: {paper_url}\n"
-                        message += f"📥 **PDF链接**: https://arxiv.org/pdf/{arxiv_id}.pdf\n"
-                        
-                # bioRxiv论文处理  
+                        message += f"Type: arXiv preprint\n"
+                        message += f"arXiv ID: {arxiv_id}\n"
+                        actual_title = result.get('title') or paper_title or f'arXiv:{arxiv_id} (extracting...)'
+                        message += f"Title: {actual_title}\n"
+                        message += f"Link: {paper_url}\n"
+                        message += f"PDF: https://arxiv.org/pdf/{arxiv_id}.pdf\n"
+                
                 elif 'biorxiv.org' in paper_url.lower():
-                    # 更新数据库显示
-                    message = message.replace(f"🔗 **数据库**: {database}\n", "🔗 **数据库**: bioRxiv\n")
-                    message += f"📄 **论文类型**: bioRxiv预印本\n"
-                    actual_title = result.get('title') or paper_title or '标题提取中...'
-                    message += f"📄 **标题**: {actual_title}\n"
-                    message += f"🔗 **原始链接**: {paper_url}\n"
+                    message = message.replace(f"Source: {database}\n", "Source: bioRxiv\n")
+                    message += f"Type: bioRxiv preprint\n"
+                    actual_title = result.get('title') or paper_title or 'extracting...'
+                    message += f"Title: {actual_title}\n"
+                    message += f"Link: {paper_url}\n"
                     
-                # medRxiv论文处理
                 elif 'medrxiv.org' in paper_url.lower():
-                    # 更新数据库显示
-                    message = message.replace(f"🔗 **数据库**: {database}\n", "🔗 **数据库**: medRxiv\n")
-                    message += f"📄 **论文类型**: medRxiv预印本\n"
-                    actual_title = result.get('title') or paper_title or '标题提取中...'
-                    message += f"📄 **标题**: {actual_title}\n"
-                    message += f"🔗 **原始链接**: {paper_url}\n"
+                    message = message.replace(f"Source: {database}\n", "Source: medRxiv\n")
+                    message += f"Type: medRxiv preprint\n"
+                    actual_title = result.get('title') or paper_title or 'extracting...'
+                    message += f"Title: {actual_title}\n"
+                    message += f"Link: {paper_url}\n"
                     
-                # chemRxiv论文处理
                 elif 'chemrxiv.org' in paper_url.lower():
-                    # 更新数据库显示
-                    message = message.replace(f"🔗 **数据库**: {database}\n", "🔗 **数据库**: ChemRxiv\n")
-                    message += f"📄 **论文类型**: ChemRxiv预印本\n"
-                    actual_title = result.get('title') or paper_title or '标题提取中...'
-                    message += f"📄 **标题**: {actual_title}\n"
-                    message += f"🔗 **原始链接**: {paper_url}\n"
+                    message = message.replace(f"Source: {database}\n", "Source: ChemRxiv\n")
+                    message += f"Type: ChemRxiv preprint\n"
+                    actual_title = result.get('title') or paper_title or 'extracting...'
+                    message += f"Title: {actual_title}\n"
+                    message += f"Link: {paper_url}\n"
                     
                 elif database and database != 'arXiv':
-                    message += f"📄 **论文类型**: {database}期刊文章\n"
-                    # 🎯 修复：优先使用返回结果中的标题，而非空的paper_title
-                    actual_title = result.get('title') or paper_title or '标题提取中...'
-                    message += f"📄 **标题**: {actual_title}\n"
-                    message += f"🔗 **原始链接**: {paper_url}\n"
+                    message += f"Type: {database} journal article\n"
+                    actual_title = result.get('title') or paper_title or 'extracting...'
+                    message += f"Title: {actual_title}\n"
+                    message += f"Link: {paper_url}\n"
                 else:
-                    # 🎯 修复：统一使用result.get('title')逻辑
-                    actual_title = result.get('title') or paper_title or '标题提取中...'
-                    message += f"📄 **标题**: {actual_title}\n"
-                    message += f"🔗 **URL**: {paper_url}\n"
+                    actual_title = result.get('title') or paper_title or 'extracting...'
+                    message += f"Title: {actual_title}\n"
+                    message += f"URL: {paper_url}\n"
                 
-                # 集合保存状态
                 if collection_key:
-                    # 🔧 修复字段名不一致问题: 使用正确的collection_moved字段
                     collection_moved = result.get("details", {}).get("collection_moved", False)
                     if collection_moved:
-                        message += f"✅ **集合保存**: 已自动移动到指定集合\n"
-                        message += f"🎯 **技术突破**: 使用updateSession官方机制\n"
+                        message += f"Collection: Moved to specified collection\n"
+                        message += f"Method: Using updateSession official mechanism\n"
                     else:
-                        message += f"⚠️ **集合保存**: 移动失败，条目在默认位置\n"
-                        message += f"📋 **手动操作**: 请在Zotero中拖拽条目到目标集合\n"
+                        message += f"Collection: Move failed, item in default location\n"
+                        message += f"Manual: Please drag item to target collection in Zotero\n"
                 else:
-                    message += f"📚 **保存位置**: 我的文库（默认位置）\n"
+                    message += f"Saved to: My Library (default)\n"
                 
-                # 📊 PDF状态详细分析（新格式）
                 details = result.get("details", {})
                 pdf_downloaded = details.get("pdf_downloaded", False)
                 pdf_error = details.get("pdf_error")
                 pdf_method = details.get("pdf_method", "link_attachment")
                 
                 if pdf_downloaded and pdf_method == "attachment":
-                    message += f"📄 **PDF文件**: ✅ 已成功下载并保存为附件\n"
-                    message += f"   🎉 **完美**: PDF文件已作为独立附件Save to Zotero中\n"
+                    message += f"PDF: Downloaded and saved as attachment\n"
                 elif pdf_method == "failed":
                     if "biorxiv.org" in paper_url.lower():
-                        message += f"📄 **PDF附件**: 🧬 bioRxiv高级下载尝试失败\n"
-                        message += f"   💡 **技术说明**: 已尝试MCP高级浏览器技术，但本次下载未成功\n"
-                        message += f"   🔄 **可能原因**: 网络延迟、服务器负载或反爬虫检测加强\n"
-                        message += f"   🔗 **建议解决方案**: \n"
-                        message += f"   1. 稍后重试（网络状况可能影响成功率）\n"
-                        message += f"   2. 使用浏览器官方Zotero插件作为备选方案\n"
+                        message += f"PDF: Advanced download attempt failed\n"
+                        message += f"  Possible: Network delay, server load, or anti-bot detection\n"
+                        message += f"  Suggestion: Try again later or use browser Zotero connector\n"
                     else:
-                        message += f"📄 **PDF附件**: ⚠️ 保存失败（可能是网络或服务器临时问题）\n"
-                        message += f"   💡 **说明**: 元数据已保存，您可以稍后手动添加PDF附件\n"
+                        message += f"PDF: Save failed (network or server issue)\n"
+                        message += f"  Metadata saved, add PDF manually later\n"
                 elif pdf_method == "none":
-                    message += f"📄 **PDF附件**: ℹ️ 未发现PDF链接\n"
+                    message += f"PDF: No PDF link found\n"
                 else:
-                    message += f"📄 **PDF附件**: ⚠️ 处理异常\n"
+                    message += f"PDF: Processing exception\n"
                 
                 if result.get("extra_preserved"):
-                    message += f"📝 **元数据**: ✅ 完整提取（Comment、学科分类、DOI等）\n"
+                    message += f"Metadata: Fully extracted (Comment, subjects, DOI, etc.)\n"
                 
-                message += f"\n📋 **立即验证**:\n"
-                details = result.get("details", {})
+                message += f"\nVerification:\n"
                 if details.get("collection_moved"):
-                    message += f"🎯 **成功！论文已在指定集合中**\n"
-                    message += f"1. 打开Zotero桌面应用\n"
-                    message += f"2. 查看指定集合中的新条目\n"
-                    message += f"3. 确认PDF附件和元数据完整性\n"
+                    message += f"Success! Paper is in the specified collection\n"
+                    message += f"1. Open Zotero desktop app\n"
+                    message += f"2. Check the specified collection for the new item\n"
+                    message += f"3. Verify PDF attachment and metadata completeness\n"
                 elif collection_key:
-                    message += f"⚠️ **论文已保存，但集合移动可能需要确认**\n"
-                    message += f"1. 打开Zotero桌面应用\n"
-                    message += f"2. 首先在指定集合中查找\n"
-                    message += f"3. 如未找到，在'我的文库'中查找并手动移动\n"
+                    message += f"Paper saved, collection move may need confirmation\n"
+                    message += f"1. Open Zotero desktop app\n"
+                    message += f"2. Check the specified collection first\n"
+                    message += f"3. If not found, check 'My Library' and move manually\n"
                 else:
-                    message += f"✅ **论文已保存到默认位置**\n"
-                    message += f"1. 打开Zotero桌面应用\n"
-                    message += f"2. 在'我的文库'中找到新条目\n"
-                    message += f"3. 如需要，可移动到指定集合\n"
+                    message += f"Paper saved to default location\n"
+                    message += f"1. Open Zotero desktop app\n"
+                    message += f"2. Find in 'My Library'\n"
+                    message += f"3. Move to collection if needed\n"
                 
-                message += f"\n🎉 **完成！享受完整的学术文献管理体验！**"
+                message += f"\nDone! Enjoy your academic literature management!"
                 
             else:
-                message = f"❌ **保存失败**: {result.get('message', '未知错误')}\n\n"
-                message += f"🔧 **故障排除**:\n"
-                message += f"• 确保Zotero桌面应用正在运行\n"
-                message += f"• 检查网络连接\n"
-                message += f"• 验证论文URL是否有效\n"
-                message += f"• 尝试重新启动Zotero应用"
+                message = f"Save failed: {result.get('message', 'Unknown error')}\n\n"
+                message += f"Troubleshooting:\n"
+                message += f"  Ensure Zotero desktop app is running\n"
+                message += f"  Check network connection\n"
+                message += f"  Verify paper URL is valid\n"
+                message += f"  Try restarting Zotero app"
             
             return [types.TextContent(type="text", text=message)]
             
         except Exception as e:
-            logger.error(f"保存论文失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 保存论文时出错: {e}")]
+            logger.error(f"Failed to save paper: {e}")
+            return [types.TextContent(type="text", text=f"Error saving paper: {e}")]
+    
+    elif name == "save_paper_by_doi":
+        doi = arguments.get("doi", "").strip()
+        collection_key = arguments.get("collection_key")
+        
+        if not doi:
+            return [types.TextContent(type="text", text="Missing DOI")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
+        try:
+            logger.info(f"Processing DOI: {doi}")
+            
+            paper_info = zotero_connector._build_paper_info_from_doi(doi)
+            
+            if "error" in paper_info:
+                return [types.TextContent(type="text", text=f"DOI parsing failed: {paper_info['error']}")]
+            
+            if not paper_info.get("title"):
+                return [types.TextContent(type="text", text="Cannot extract paper title. DOI may be invalid or unsupported")]
+            
+            result = zotero_connector.save_item_to_zotero(paper_info, collection_key=collection_key)
+            
+            if result["success"]:
+                message = f"Paper saved successfully!\n\n"
+                message += f"DOI: {doi}\n"
+                message += f"Title: {paper_info.get('title', 'Unknown')}\n"
+                
+                if paper_info.get('authors'):
+                    message += f"Authors: {paper_info['authors']}\n"
+                
+                if paper_info.get('date'):
+                    message += f"Date: {paper_info['date']}\n"
+                
+                if collection_key:
+                    collection_moved = result.get("details", {}).get("collection_moved", False)
+                    if collection_moved:
+                        message += f"Collection: Moved to specified collection\n"
+                    else:
+                        message += f"Collection: Move failed, item in default location\n"
+                else:
+                    message += f"Saved to: My Library\n"
+                
+                if paper_info.get('pdf_url'):
+                    message += f"PDF: {paper_info['pdf_url']}\n"
+                
+                message += f"\nTip: DOI is the most reliable paper identifier. Recommended!"
+                
+            else:
+                message = f"Save failed: {result.get('message', 'Unknown error')}\n\n"
+                message += f"Troubleshooting:\n"
+                message += f"  Ensure Zotero desktop app is running\n"
+                message += f"  Check network connection\n"
+                message += f"  Verify DOI is valid"
+            
+            return [types.TextContent(type="text", text=message)]
+            
+        except Exception as e:
+            logger.error(f"Failed to save paper: {e}")
+            return [types.TextContent(type="text", text=f"Error saving paper: {e}")]
     
     elif name == "create_zotero_collection":
         collection_name = arguments.get("name", "").strip()
         parent_key = arguments.get("parent_key", "").strip() or None
         
         if not collection_name:
-            return [types.TextContent(type="text", text="❌ 缺少集合名称")]
+            return [types.TextContent(type="text", text="Missing collection name")]
         
         if not zotero_connector.is_running():
-            return [types.TextContent(type="text", text="❌ Zotero不可用，请启动Zotero桌面应用")]
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
         
-        # 由于Zotero Connector API限制，提供手动创建指导
-        message = f"📁 **创建Zotero集合指导**\n\n"
-        message += f"💡 **注意**: 由于Zotero API限制，需要手动创建集合\n\n"
-        message += f"🎯 **手动创建步骤**：\n"
-        message += f"1. 📱 打开**Zotero桌面应用**\n"
-        message += f"2. 🖱️ 右键点击左侧集合区域\n"
-        message += f"3. ➕ 选择 **\"新建集合\"**\n"
-        message += f"4. 📝 输入集合名称：**{collection_name}**\n"
+        message = f"Create Zotero Collection\n\n"
+        message += f"Note: Due to Zotero API limitations, collections need to be created manually\n\n"
+        message += f"Manual creation steps:\n"
+        message += f"1. Open Zotero desktop app\n"
+        message += f"2. Right-click on the collections panel on the left\n"
+        message += f"3. Select 'New Collection'\n"
+        message += f"4. Enter collection name: {collection_name}\n"
         
         if parent_key:
-            message += f"5. 📁 可选：拖拽到父集合下\n"
+            message += f"5. Optionally drag under parent collection\n"
         
-        message += f"6. ✅ 确认创建\n\n"
-        message += f"📚 **创建完成后**：\n"
-        message += f"• 使用 `get_zotero_collections` 获取新集合的Key\n"
-        message += f"• 使用Key在 `save_paper_to_zotero` 中指定目标集合\n\n"
-        message += f"⏱️ **只需30秒，一次创建，长期使用！**"
+        message += f"6. Confirm creation\n\n"
+        message += f"After creation:\n"
+        message += f"  Use get_zotero_collections to get the new collection Key\n"
+        message += f"  Use the Key in save_paper_to_zotero to specify target collection\n\n"
+        message += f"Time: About 30 seconds for creation, long-term use!"
         
         return [types.TextContent(type="text", text=message)]
     
@@ -802,891 +719,550 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
         arxiv_url = arguments.get("arxiv_url")
         
         if not arxiv_url:
-            return [types.TextContent(type="text", text="❌ 缺少arXiv URL")]
+            return [types.TextContent(type="text", text="Missing arXiv URL")]
         
         if 'arxiv.org' not in arxiv_url:
-            return [types.TextContent(type="text", text="❌ 无效的arXiv URL")]
+            return [types.TextContent(type="text", text="Invalid arXiv URL")]
         
         try:
             metadata = zotero_connector._extract_arxiv_metadata(arxiv_url)
             
             if 'error' in metadata:
-                return [types.TextContent(type="text", text=f"❌ 提取失败: {metadata['error']}")]
+                return [types.TextContent(type="text", text=f"Extraction failed: {metadata['error']}")]
             
-            message = f"📄 **arXiv论文元数据**\n\n"
-            message += f"🏷️ **arXiv ID**: {metadata.get('arxiv_id', '未知')}\n"
-            message += f"📝 **标题**: {metadata.get('title', '未知')}\n"
-            message += f"👥 **作者**: {metadata.get('authors_string', '未知')}\n"
-            message += f"📅 **日期**: {metadata.get('date', '未知')}\n"
+            message = f"arXiv Paper Metadata\n\n"
+            message += f"arXiv ID: {metadata.get('arxiv_id', 'Unknown')}\n"
+            message += f"Title: {metadata.get('title', 'Unknown')}\n"
+            message += f"Authors: {metadata.get('authors_string', 'Unknown')}\n"
+            message += f"Date: {metadata.get('date', 'Unknown')}\n"
             
             if metadata.get('comment'):
-                message += f"📋 **Comment**: {metadata['comment']}\n"
+                message += f"Comment: {metadata['comment']}\n"
             
             if metadata.get('subjects'):
                 subjects_str = ', '.join(metadata['subjects'][:3])
-                message += f"🔬 **学科分类**: {subjects_str}\n"
+                message += f"Subjects: {subjects_str}\n"
             
             if metadata.get('doi'):
-                message += f"🔗 **DOI**: {metadata['doi']}\n"
+                message += f"DOI: {metadata['doi']}\n"
             
-            message += f"🔗 **PDF链接**: {metadata.get('pdf_url', '未知')}\n"
+            message += f"PDF: {metadata.get('pdf_url', 'Unknown')}\n"
             
             if metadata.get('abstract'):
                 abstract_preview = metadata['abstract'][:200] + "..." if len(metadata['abstract']) > 200 else metadata['abstract']
-                message += f"\n📖 **摘要预览**:\n{abstract_preview}\n"
+                message += f"\nAbstract Preview:\n{abstract_preview}\n"
             
-            message += f"\n💡 **下一步**: 使用 `save_paper_to_zotero` 保存到文献库"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            logger.error(f"提取arXiv元数据失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 提取元数据时出错: {e}")]
-    
-    elif name == "set_database_cookies":
-        database_name = arguments.get("database_name", "").strip()
-        cookies = arguments.get("cookies", "").strip()
-        
-        if not database_name or not cookies:
-            return [types.TextContent(type="text", text="❌ 缺少数据库名称或cookies")]
-        
-        try:
-            success = zotero_connector.set_database_cookies(database_name, cookies)
-            
-            if success:
-                message = f"✅ **{database_name} Cookies设置成功！**\n\n"
-                message += f"🔐 **数据库**: {database_name}\n"
-                message += f"📝 **状态**: 认证信息已保存\n\n"
-                message += f"🚀 **下一步**: 使用 `test_database_access` 验证访问权限\n"
-                message += f"💡 **然后**: 可以保存{database_name}的论文到Zotero了！"
-            else:
-                message = f"❌ **{database_name} Cookies设置失败**\n\n"
-                message += f"🔧 **可能原因**:\n"
-                message += f"• Cookie格式不正确\n"
-                message += f"• 不支持的数据库名称\n"
-                message += f"• 网络连接问题\n\n"
-                message += f"Suggestions: 检查cookie格式并重试"
+            message += f"\nNext: Use save_paper_to_zotero to save to your library"
             
             return [types.TextContent(type="text", text=message)]
             
         except Exception as e:
-            logger.error(f"设置{database_name} cookies失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 设置cookies时出错: {e}")]
+            logger.error(f"Failed to extract arXiv metadata: {e}")
+            return [types.TextContent(type="text", text=f"Error extracting metadata: {e}")]
     
-    elif name == "get_supported_databases":
-        try:
-            databases = zotero_connector.get_supported_databases()
-            
-            message = f"🌐 **ZotLink支持的学术数据库**\n\n"
-            
-            for db in databases:
-                db_name = db.get('name', '未知')
-                requires_auth = db.get('requires_auth', False)
-                has_cookies = db.get('has_cookies', False)
-                
-                auth_status = "🔐 需要认证" if requires_auth else "🌐 开放访问"
-                cookie_status = "✅ 已配置" if has_cookies else "❌ 未配置" if requires_auth else "➖ 无需配置"
-                
-                message += f"### {db_name}\n"
-                message += f"📊 **访问类型**: {auth_status}\n"
-                message += f"🍪 **Cookie状态**: {cookie_status}\n"
-                
-                if db.get('supported_types'):
-                    types_str = ', '.join(db['supported_types'][:3])
-                    message += f"📝 **支持类型**: {types_str}\n"
-                
-                message += f"\n"
-            
-            message += f"💡 **使用说明**:\n"
-            message += f"• 🌐 **开放访问**数据库可直接使用\n"
-            message += f"• 🔐 **需要认证**的数据库需先设置cookies\n"
-            message += f"• 🍪 使用 `set_database_cookies` 设置认证信息\n"
-            message += f"• 🧪 使用 `test_database_access` 验证访问权限"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            logger.error(f"获取支持的数据库失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 获取数据库信息时出错: {e}")]
-    
-    elif name == "test_database_access":
-        database_name = arguments.get("database_name", "").strip()
-        
-        if not database_name:
-            return [types.TextContent(type="text", text="❌ 缺少数据库名称")]
-        
-        try:
-            result = zotero_connector.test_database_access(database_name)
-            
-            db_name = result.get('database', database_name)
-            status = result.get('status', 'unknown')
-            message_text = result.get('message', '未知状态')
-            
-            if status == 'success':
-                message = f"🎉 **{db_name} 访问测试成功！**\n\n"
-                message += f"✅ **状态**: 访问正常\n"
-                message += f"🔗 **数据库**: {db_name}\n"
-                message += f"💡 **说明**: {message_text}\n\n"
-                message += f"🚀 **现在可以**:\n"
-                message += f"• 使用 `save_paper_to_zotero` 保存{db_name}的论文\n"
-                message += f"• 自动下载PDF和提取元数据\n"
-                message += f"• 保存到指定的Zotero集合"
-            elif status == 'no_cookies':
-                message = f"🔐 **{db_name} 需要认证**\n\n"
-                message += f"⚠️ **状态**: 未设置认证信息\n"
-                message += f"💡 **说明**: {message_text}\n\n"
-                message += f"📋 **下一步**:\n"
-                message += f"1. 在浏览器中登录{db_name}网站\n"
-                message += f"2. 复制cookie信息\n"
-                message += f"3. 使用 `set_database_cookies` 设置认证\n"
-                message += f"4. 重新测试访问权限"
-            elif status == 'access_denied':
-                message = f"❌ **{db_name} 访问被拒绝**\n\n"
-                message += f"🚫 **状态**: {message_text}\n"
-                message += f"🔧 **可能原因**:\n"
-                message += f"• Cookies已过期\n"
-                message += f"• 需要重新登录\n"
-                message += f"• 机构访问权限问题\n\n"
-                message += f"Suggestions: 重新获取cookies并更新"
-            else:
-                message = f"⚠️ **{db_name} 状态未知**\n\n"
-                message += f"❓ **状态**: {status}\n"
-                message += f"💬 **说明**: {message_text}"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            logger.error(f"测试{database_name}访问失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 测试访问时出错: {e}")]
-    
-    elif name == "get_cookie_guide":
-        database_name = arguments.get("database_name", "").strip()
-        
-        message = f"🍪 **学术数据库Cookie获取指南**\n\n"
-        
-        if database_name and database_name.lower() == "nature":
-            message += f"🔬 **Nature网站Cookie获取指南**\n\n"
-            message += f"### 📋 详细步骤（Chrome推荐）：\n\n"
-            message += f"1. **🌐 登录Nature网站**\n"
-            message += f"   • 访问 https://www.nature.com\n"
-            message += f"   • 使用机构账号或个人订阅登录\n"
-            message += f"   • 确保能正常访问付费内容\n\n"
-            message += f"2. **🛠️ 打开开发者工具**\n"
-            message += f"   • 按 `F12` 或右键 → 检查\n"
-            message += f"   • 进入 `Network` 标签页\n\n"
-            message += f"3. **🔄 刷新页面**\n"
-            message += f"   • 按 `F5` 刷新Nature首页\n"
-            message += f"   • 等待网络请求加载完成\n\n"
-            message += f"4. **📋 复制Cookie**\n"
-            message += f"   • 选择任意一个请求\n"
-            message += f"   • 在右侧找到 `Request Headers`\n"
-            message += f"   • 找到 `Cookie:` 行\n"
-            message += f"   • **复制冒号后的全部内容**\n\n"
-            message += f"5. **✅ 设置到ZotLink**\n"
-            message += f"   • 使用 `set_database_cookies` 工具\n"
-            message += f"   • database_name: \"Nature\"\n"
-            message += f"   • cookies: [粘贴复制的内容]\n\n"
-        else:
-            message += f"### 🌐 **通用Cookie获取方法**：\n\n"
-            message += f"#### 方法1: Chrome开发者工具 (推荐)\n"
-            message += f"1. 在Chrome中访问并登录目标数据库网站\n"
-            message += f"2. 按 `F12` 打开开发者工具\n"
-            message += f"3. 进入 `Network` 标签页\n"
-            message += f"4. 刷新页面（`F5`）\n"
-            message += f"5. 选择任意请求\n"
-            message += f"6. 在右侧找到 `Request Headers`\n"
-            message += f"7. 复制 `Cookie:` 后面的全部内容\n\n"
-            message += f"#### 方法2: Application标签\n"
-            message += f"1. 按 `F12` 打开开发者工具\n"
-            message += f"2. 进入 `Application` 标签页\n"
-            message += f"3. 左侧选择 `Storage` > `Cookies` > 目标网站\n"
-            message += f"4. 手动复制所有cookies\n\n"
-            message += f"#### 方法3: 浏览器扩展\n"
-            message += f"安装 \"Cookie Editor\" 等扩展，一键导出cookies\n\n"
-        
-        message += f"### 🎯 **支持的数据库**：\n"
-        try:
-            databases = zotero_connector.get_supported_databases()
-            for db in databases:
-                if db.get('requires_auth'):
-                    auth_status = "✅ 已配置" if db.get('has_cookies') else "❌ 需要配置"
-                    message += f"• **{db['name']}**: 🔐 需要cookies {auth_status}\n"
-                else:
-                    message += f"• **{db['name']}**: 🌐 开放访问，无需cookies\n"
-        except:
-            message += f"• **Nature**: 🔐 需要cookies\n"
-            message += f"• **arXiv**: 🌐 开放访问，无需cookies\n"
-        
-        message += f"\n💡 **提示**：cookies通常7-30天过期，需要定期更新\n"
-        message += f"🔧 **下一步**：设置cookies后使用 `test_database_access` 验证"
-        
-        return [types.TextContent(type="text", text=message)]
-    
-    elif name == "get_cookie_sync_status":
-        try:
-            status = cookie_sync_manager.get_comprehensive_status()
-            
-            message = f"🔄 **Cookie自动同步服务状态**\n\n"
-            
-            # 同步管理器状态
-            sync_status = status['sync_manager']
-            message += f"### 📊 同步服务状态\n"
-            message += f"• **运行状态**: {'🟢 运行中' if sync_status['running'] else '🔴 已停止'}\n"
-            message += f"• **同步功能**: {'🟢 启用' if sync_status['sync_enabled'] else '🔴 禁用'}\n\n"
-            
-            # HTTP接收服务状态
-            receiver_status = status['receiver']
-            message += f"### 🌐 HTTP接收服务\n"
-            message += f"• **服务状态**: {'🟢 运行中' if receiver_status['running'] else '🔴 已停止'}\n"
-            message += f"• **监听端口**: {receiver_status['port']}\n"
-            message += f"• **服务地址**: {receiver_status['url']}\n"
-            message += f"• **待处理队列**: {receiver_status['pending_cookies']} 个\n\n"
-            
-            # 统计信息
-            stats = status['statistics']
-            message += f"### 📈 同步统计\n"
-            message += f"• **总接收**: {stats['total_received']} 次\n"
-            message += f"• **成功应用**: {stats['successfully_applied']} 次\n"
-            message += f"• **失败次数**: {stats['failed_applications']} 次\n"
-            message += f"• **成功率**: {stats['success_rate']:.1f}%\n"
-            message += f"• **运行时长**: {stats['uptime_formatted']}\n"
-            if stats.get('last_sync'):
-                message += f"• **最后同步**: {stats['last_sync'].strftime('%Y-%m-%d %H:%M:%S')}\n"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ 获取同步状态失败: {e}")]
-    
-    elif name == "get_database_auth_status":
-        try:
-            db_status = cookie_sync_manager.get_database_status()
-            
-            message = f"🔐 **数据库认证状态**\n\n"
-            
-            authenticated_count = 0
-            total_count = len(db_status)
-            
-            for identifier, status in db_status.items():
-                status_icon = "🟢" if status.get('has_cookies') else "🔴"
-                auth_status = status.get('status', '未知')
-                
-                message += f"### {status_icon} {status['name']}\n"
-                message += f"• **状态**: {auth_status}\n"
-                message += f"• **域名**: {', '.join(status.get('domains', []))}\n"
-                
-                if status.get('has_cookies'):
-                    authenticated_count += 1
-                    if status.get('expires_at'):
-                        message += f"• **有效期**: {status['expires_at'].strftime('%Y-%m-%d %H:%M')}\n"
-                    if status.get('cookie_count'):
-                        message += f"• **Cookie数量**: {status['cookie_count']} 个\n"
-                else:
-                    message += f"• **登录页面**: {status.get('login_url', 'N/A')}\n"
-                
-                message += f"\n"
-            
-            message += f"📊 **总览**: {authenticated_count}/{total_count} 个数据库已认证\n\n"
-            
-            if authenticated_count < total_count:
-                expired_dbs = cookie_sync_manager.get_expired_databases()
-                if expired_dbs:
-                    message += f"⚠️ **需要更新认证的数据库**: {', '.join(expired_dbs)}\n"
-                    message += f"Suggestions: 使用 `generate_bookmark_code` 获取书签，然后登录相应网站点击书签自动同步\n"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ 获取认证状态失败: {e}")]
-    
-    elif name == "get_authentication_guide":
-        database = arguments.get("database", "").lower()
-        
-        if not database:
-            return [types.TextContent(type="text", text="❌ 请指定数据库标识符")]
-        
-        try:
-            guide = cookie_sync_manager.get_authentication_guide(database)
-            
-            if "error" in guide:
-                return [types.TextContent(type="text", text=f"❌ {guide['error']}")]
-            
-            message = f"🔐 **{guide['database']} 认证指南**\n\n"
-            
-            if guide.get('current_status'):
-                message += f"### 📊 当前状态\n{guide['current_status']}\n\n"
-            else:
-                message += f"### 📊 当前状态\n❌ 未认证\n\n"
-            
-            message += f"### 📋 认证步骤\n"
-            for step in guide.get('steps', []):
-                message += f"{step}\n"
-            
-            message += f"\n### 🔗 相关链接\n"
-            message += f"• **登录页面**: {guide.get('login_url')}\n"
-            
-            bookmark_info = guide.get('bookmark_info', {})
-            if bookmark_info.get('status') == '运行中':
-                message += f"• **同步服务**: ✅ {bookmark_info['status']} ({bookmark_info['service_url']})\n"
-            else:
-                message += f"• **同步服务**: ❌ 未运行，请确保ZotLink正在运行\n"
-            
-            message += f"\n💡 **提示**: 使用 `generate_bookmark_code` 获取书签代码，添加到浏览器收藏夹后即可一键同步认证信息"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ 获取认证指南失败: {e}")]
-    
-    elif name == "get_databases_status":
-        try:
-            databases_status = zotero_connector.get_databases_status()
-            
-            if not databases_status:
-                return [types.TextContent(type="text", text="❌ 没有找到数据库配置信息")]
-            
-            message = f"📊 **数据库详细状态信息**\n\n"
-            
-            for db_key, status in databases_status.items():
-                db_name = status.get('name', db_key)
-                status_flag = status.get('status', 'inactive')
-                cookie_count = status.get('cookie_count', 0)
-                last_updated = status.get('last_updated', '未知')
-                domains = status.get('domains', [])
-                description = status.get('description', '')
-                login_url = status.get('login_url', '')
-                test_url = status.get('test_url', '')
-                
-                status_icon = "✅" if status_flag == "active" else "❌"
-                
-                message += f"### {status_icon} {db_name} (`{db_key}`)\n"
-                message += f"📊 **状态**: {status_flag}\n"
-                message += f"🍪 **Cookie数量**: {cookie_count}\n"
-                message += f"⏰ **更新时间**: {last_updated}\n"
-                message += f"🌐 **域名**: {', '.join(domains) if domains else '无'}\n"
-                
-                if description:
-                    message += f"📝 **描述**: {description}\n"
-                
-                if login_url:
-                    message += f"🔗 **登录页面**: {login_url}\n"
-                    
-                if test_url:
-                    message += f"🧪 **测试链接**: {test_url}\n"
-                
-                message += f"\n"
-            
-            message += f"💡 **管理说明**:\n"
-            message += f"• 使用 `update_database_cookies` 更新Cookie\n"
-            message += f"• Cookie格式: `name1=value1; name2=value2`\n"
-            message += f"• 从浏览器开发者工具获取Cookie字符串\n\n"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            logger.error(f"获取数据库状态失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 获取数据库状态时出错: {e}")]
-    
-    elif name == "update_database_cookies":
-        try:
-            database = arguments.get("database")
-            cookies = arguments.get("cookies")
-            
-            if not database:
-                return [types.TextContent(type="text", text="❌ 请指定数据库名称")]
-                
-            if not cookies:
-                return [types.TextContent(type="text", text="❌ 请提供Cookie字符串")]
-            
-            # 更新数据库Cookie
-            success = zotero_connector.update_database_cookies(database, cookies)
-            
-            if success:
-                cookie_count = len(cookies.split(';'))
-                message = f"✅ **{database.upper()}数据库Cookie更新成功！**\n\n"
-                message += f"📊 **更新信息**:\n"
-                message += f"• 🍪 Cookie数量: {cookie_count}\n" 
-                message += f"• ⏰ 更新时间: 刚刚\n"
-                message += f"• 📊 状态: 已激活\n\n"
-                message += f"💡 **下一步**:\n"
-                message += f"• 使用 `test_database_access` 测试访问权限\n"
-                message += f"• 尝试保存论文测试功能\n"
-                
-                return [types.TextContent(type="text", text=message)]
-            else:
-                return [types.TextContent(type="text", text=f"❌ 更新{database}数据库Cookie失败")]
-                
-        except Exception as e:
-            logger.error(f"更新数据库cookies失败: {e}")
-            return [types.TextContent(type="text", text=f"❌ 更新Cookie时出错: {e}")]
-    
-    elif name == "generate_bookmark_code":
-        try:
-            # 读取书签JavaScript代码
-            bookmark_file = Path(__file__).parent / "browser_bookmarks" / "zotlink_sync_bookmarklet.js"
-            
-            if not bookmark_file.exists():
-                # 如果文件不存在，生成简化版本
-                bookmark_code = """javascript:(function(){
-    const ZOTLINK_URL='http://localhost:23120';
-    const site=location.hostname;
-    const cookies=document.cookie;
-    if(!cookies){alert('请先登录网站');return;}
-    fetch(ZOTLINK_URL+'/cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({site:site,siteName:site,cookies:cookies,url:location.href,timestamp:new Date().toISOString()})}).then(r=>r.json()).then(d=>alert('✅ 认证信息已同步到ZotLink')).catch(e=>alert('❌ 同步失败: '+e.message));
-})();"""
-            else:
-                with open(bookmark_file, 'r', encoding='utf-8') as f:
-                    bookmark_code = f.read().strip()
-            
-            receiver_status = cookie_sync_manager.get_receiver_status()
-            
-            message = f"🔖 **ZotLink自动同步书签**\n\n"
-            
-            if receiver_status.get('running'):
-                message += f"### ✅ 服务状态正常\n"
-                message += f"Cookie接收服务正在运行: {receiver_status['url']}\n\n"
-            else:
-                message += f"### ❌ 服务未运行\n"
-                message += f"请确保ZotLink正在运行，然后重新生成书签\n\n"
-                
-            message += f"### 📋 使用步骤\n"
-            message += f"1. **复制书签代码**（见下方）\n"
-            message += f"2. **添加到浏览器**：\n"
-            message += f"   - 右键收藏夹栏 → 添加书签\n"
-            message += f"   - 名称：`ZotLink同步助手`\n"
-            message += f"   - URL：粘贴下方代码\n"
-            message += f"3. **使用方法**：\n"
-            message += f"   - 登录Nature/Science/IEEE等学术网站\n"
-            message += f"   - 点击书签即可自动同步认证信息\n\n"
-            
-            message += f"### 🎯 支持的网站\n"
-            message += f"• Nature (nature.com)\n"
-            message += f"• Science (science.org)\n"
-            message += f"• IEEE (ieeexplore.ieee.org)\n"
-            message += f"• Springer (link.springer.com)\n\n"
-            
-            message += f"### 📝 书签代码\n"
-            message += f"```javascript\n{bookmark_code}\n```\n\n"
-            
-            message += f"💡 **使用技巧**：\n"
-            message += f"- 书签会在页面右上角显示同步状态\n"
-            message += f"- 同步成功后可立即在Claude Desktop中下载论文\n"
-            message += f"- 如果同步失败，请检查ZotLink是否正在运行"
-            
-            return [types.TextContent(type="text", text=message)]
-            
-        except Exception as e:
-            return [types.TextContent(type="text", text=f"Bookmark code generation failed: {e}")]
-
     elif name == "get_library_items":
+        limit = arguments.get("limit", 50)
+        offset = arguments.get("offset", 0)
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            limit = arguments.get("limit", 50)
-            offset = arguments.get("offset", 0)
-
-            result = zotero_connector.get_library_items(limit=limit, offset=offset)
-
-            if result.get("success"):
-                items = result.get("items", [])
-                if isinstance(items, str):
-                    message = f"Library Items Response:\n{items}"
-                else:
-                    message = f"Library Items ({len(items)} items)\n\n"
-                    for item in items[:10]:
-                        item_type = item.get('itemType', 'Unknown')
-                        title = item.get('title', 'Untitled')
-                        message += f"- [{item_type}] {title}\n"
-                    if len(items) > 10:
-                        message += f"\n... and {len(items) - 10} more items"
+            items = zotero_connector.get_library_items(limit=limit, offset=offset)
+            
+            if not items:
+                message = "Your library is empty or no more items\n\n"
+                message += "Use save_paper_to_zotero to add papers!"
                 return [types.TextContent(type="text", text=message)]
-            else:
-                return [types.TextContent(type="text", text=f"Failed to get items: {result.get('error', 'Unknown error')}")]
-
+            
+            message = f"Zotero Library Items (showing {len(items)} items)\n\n"
+            
+            for i, item in enumerate(items, 1):
+                title = item.get('title', 'Untitled')
+                item_type = item.get('itemType', 'Unknown')
+                date = item.get('date', 'No date')
+                key = item.get('key', 'No key')
+                
+                message += f"{i}. {title}\n"
+                message += f"   Type: {item_type} | Date: {date}\n"
+                message += f"   Key: {key}\n\n"
+            
+            message += f"Use get_zotero_item with a specific key for details"
+            
+            return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
             logger.error(f"Failed to get library items: {e}")
-            return [types.TextContent(type="text", text=f"Error getting items: {e}")]
-
+            return [types.TextContent(type="text", text=f"Error getting library items: {e}")]
+    
     elif name == "search_zotero_items":
+        query = arguments.get("query", "").strip()
+        
+        if not query:
+            return [types.TextContent(type="text", text="Missing search query")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            query = arguments.get("query", "").strip()
-            if not query:
-                return [types.TextContent(type="text", text="Please provide a search query")]
-
-            result = zotero_connector.search_items(query)
-
-            if result.get("success"):
-                items = result.get("items", [])
-                message = f"Search Results for '{query}' ({len(items)} items)\n\n"
-                for item in items[:10]:
-                    item_type = item.get('itemType', 'Unknown')
-                    title = item.get('title', 'Untitled')
-                    message += f"- [{item_type}] {title}\n"
-                if len(items) > 10:
-                    message += f"\n... and {len(items) - 10} more items"
+            results = zotero_connector.search_items(query)
+            
+            if not results:
+                message = f"No items found matching: {query}\n\n"
+                message += "Try different keywords or save new papers"
                 return [types.TextContent(type="text", text=message)]
-            else:
-                return [types.TextContent(type="text", text=f"Search failed: {result.get('error', 'Unknown error')}")]
-
+            
+            message = f"Search Results for '{query}' ({len(results)} items)\n\n"
+            
+            for i, item in enumerate(results, 1):
+                title = item.get('title', 'Untitled')
+                item_type = item.get('itemType', 'Unknown')
+                key = item.get('key', 'No key')
+                
+                message += f"{i}. {title}\n"
+                message += f"   Type: {item_type} | Key: {key}\n\n"
+            
+            message += f"Use get_zotero_item with a specific key for details"
+            
+            return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
-            logger.error(f"Search failed: {e}")
-            return [types.TextContent(type="text", text=f"Search error: {e}")]
-
+            logger.error(f"Failed to search items: {e}")
+            return [types.TextContent(type="text", text=f"Error searching items: {e}")]
+    
     elif name == "get_zotero_item":
+        item_key = arguments.get("item_key", "").strip()
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-
-            result = zotero_connector.get_item(item_key)
-
-            if result.get("success"):
-                item = result.get("item", {})
-                if isinstance(item, str):
-                    return [types.TextContent(type="text", text=f"Item {item_key}:\n{item}")]
-                else:
-                    message = f"Item Details: {item_key}\n\n"
-                    message += f"Type: {item.get('itemType', 'Unknown')}\n"
-                    message += f"Title: {item.get('title', 'Untitled')}\n"
-                    if item.get('creators'):
-                        authors = [c.get('lastName', '') for c in item.get('creators', [])]
-                        message += f"Authors: {', '.join(authors)}\n"
-                    if item.get('abstractNote'):
-                        abstract = item.get('abstractNote')[:200]
-                        message += f"Abstract: {abstract}...\n"
-                    return [types.TextContent(type="text", text=message)]
-            else:
-                return [types.TextContent(type="text", text=f"Failed to get item: {result.get('error', 'Unknown error')}")]
-
+            item = zotero_connector.get_item(item_key)
+            
+            if not item:
+                return [types.TextContent(type="text", text=f"Item not found: {item_key}")]
+            
+            title = item.get('title', 'Untitled')
+            item_type = item.get('itemType', 'Unknown')
+            date = item.get('date', 'No date')
+            url = item.get('url', 'No URL')
+            abstract = item.get('abstractNote', 'No abstract')
+            creators = item.get('creators', [])
+            
+            message = f"Zotero Item Details\n\n"
+            message += f"Title: {title}\n"
+            message += f"Type: {item_type}\n"
+            message += f"Date: {date}\n"
+            message += f"URL: {url}\n"
+            
+            if creators:
+                authors = []
+                for c in creators:
+                    name = c.get('firstName', '') + ' ' + c.get('lastName', '')
+                    if name.strip():
+                        authors.append(name.strip())
+                if authors:
+                    message += f"Authors: {', '.join(authors)}\n"
+            
+            if abstract and abstract != 'No abstract':
+                abstract_preview = abstract[:300] + "..." if len(abstract) > 300 else abstract
+                message += f"\nAbstract:\n{abstract_preview}\n"
+            
+            message += f"\nKey: {item_key}"
+            
+            return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
             logger.error(f"Failed to get item: {e}")
             return [types.TextContent(type="text", text=f"Error getting item: {e}")]
-
+    
     elif name == "update_zotero_item":
+        item_key = arguments.get("item_key", "").strip()
+        title = arguments.get("title", "").strip() or None
+        abstract = arguments.get("abstract", "").strip() or None
+        date = arguments.get("date", "").strip() or None
+        url = arguments.get("url", "").strip() or None
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-
             updates = {}
-            if arguments.get("title"):
-                updates["title"] = arguments["title"]
-            if arguments.get("abstract"):
-                updates["abstractNote"] = arguments["abstract"]
-            if arguments.get("date"):
-                updates["date"] = arguments["date"]
-            if arguments.get("url"):
-                updates["url"] = arguments["url"]
-
+            if title: updates['title'] = title
+            if abstract: updates['abstractNote'] = abstract
+            if date: updates['date'] = date
+            if url: updates['url'] = url
+            
             if not updates:
-                return [types.TextContent(type="text", text="Please provide at least one field to update (title, abstract, date, or url)")]
-
-            result = zotero_connector.update_item(item_key, updates)
-
-            if result.get("success"):
-                message = f"Item Updated Successfully!\n\n"
-                message += f"Item Key: {item_key}\n"
-                message += f"Updated Fields:\n"
-                for field, value in updates.items():
-                    message += f"  - {field}: {value}\n"
-                return [types.TextContent(type="text", text=message)]
+                return [types.TextContent(type="text", text="No updates specified")]
+            
+            success = zotero_connector.update_item(item_key, updates)
+            
+            if success:
+                message = f"Item updated successfully!\n\n"
+                message += f"Key: {item_key}\n"
+                if title: message += f"New title: {title}\n"
+                if abstract: message += f"New abstract: Set\n"
+                if date: message += f"New date: {date}\n"
+                if url: message += f"New URL: {url}\n"
+                message += f"\nCheck Zotero to verify changes"
             else:
-                return [types.TextContent(type="text", text=f"Update failed: {result.get('error', 'Unknown error')}")]
-
+                message = f"Update failed for item: {item_key}\n\n"
+                message += f"Possible causes:\n"
+                message += f"  Item may not exist\n"
+                message += f"  Network error\n"
+                message += f"  Zotero sync in progress"
+            
+            return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
-            logger.error(f"Update failed: {e}")
-            return [types.TextContent(type="text", text=f"Update error: {e}")]
-
+            logger.error(f"Failed to update item: {e}")
+            return [types.TextContent(type="text", text=f"Error updating item: {e}")]
+    
     elif name == "update_zotero_item_tags":
+        item_key = arguments.get("item_key", "").strip()
+        tags = arguments.get("tags", [])
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not tags:
+            return [types.TextContent(type="text", text="No tags specified")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-
-            tags = arguments.get("tags", [])
-            if not tags:
-                return [types.TextContent(type="text", text="Please provide a list of tags")]
-
-            result = zotero_connector.update_item_tags(item_key, tags)
-
-            if result.get("success"):
-                message = f"Tags Updated Successfully!\n\n"
+            success = zotero_connector.update_item_tags(item_key, tags)
+            
+            if success:
+                message = f"Tags updated successfully!\n\n"
                 message += f"Item Key: {item_key}\n"
-                message += f"New Tags: {', '.join(tags)}"
-                return [types.TextContent(type="text", text=message)]
+                message += f"New Tags: {', '.join(tags)}\n"
             else:
-                return [types.TextContent(type="text", text=f"Tag update failed: {result.get('error', 'Unknown error')}")]
-
+                message = f"Failed to update tags for: {item_key}\n\n"
+                message += f"Possible causes:\n"
+                message += f"  Item may not exist\n"
+                message += f"  Network error"
+            
+            return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
-            logger.error(f"Tag update failed: {e}")
-            return [types.TextContent(type="text", text=f"Tag update error: {e}")]
-
+            logger.error(f"Failed to update tags: {e}")
+            return [types.TextContent(type="text", text=f"Error updating tags: {e}")]
+    
     elif name == "delete_zotero_item":
+        item_key = arguments.get("item_key", "").strip()
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-
-            result = zotero_connector.delete_item(item_key)
-
-            if result.get("success"):
-                return [types.TextContent(type="text", text=f"Item Deleted Successfully!\n\nItem Key: {item_key}")]
+            success = zotero_connector.delete_item(item_key)
+            
+            if success:
+                message = f"Item deleted successfully!\n\n"
+                message += f"Key: {item_key}\n"
+                message += f"\nNote: This action cannot be undone"
             else:
-                return [types.TextContent(type="text", text=f"Delete failed: {result.get('error', 'Unknown error')}")]
-
+                message = f"Failed to delete item: {item_key}\n\n"
+                message += f"Possible causes:\n"
+                message += f"  Item may not exist\n"
+                message += f"  Network error"
+            
+            return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
-            logger.error(f"Delete failed: {e}")
-            return [types.TextContent(type="text", text=f"Delete error: {e}")]
-
+            logger.error(f"Failed to delete item: {e}")
+            return [types.TextContent(type="text", text=f"Error deleting item: {e}")]
+    
     elif name == "move_zotero_item":
+        item_key = arguments.get("item_key", "").strip()
+        collection_key = arguments.get("collection_key", "").strip()
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not collection_key:
+            return [types.TextContent(type="text", text="Missing collection key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            collection_key = arguments.get("collection_key", "").strip()
-
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-            if not collection_key:
-                return [types.TextContent(type="text", text="Please provide a collection key")]
-
-            result = zotero_connector.move_item_to_collection(item_key, collection_key)
-
-            if result.get("success"):
-                message = f"Item Moved Successfully!\n\n"
+            success = zotero_connector.move_item_to_collection(item_key, collection_key)
+            
+            if success:
+                message = f"Item moved successfully!\n\n"
                 message += f"Item Key: {item_key}\n"
-                message += f"Target Collection: {collection_key}"
-                return [types.TextContent(type="text", text=message)]
+                message += f"Collection Key: {collection_key}\n"
             else:
-                return [types.TextContent(type="text", text=f"Move failed: {result.get('error', 'Unknown error')}")]
-
+                message = f"Failed to move item: {item_key}\n\n"
+                message += f"Possible causes:\n"
+                message += f"  Item or collection may not exist\n"
+                message += f"  Network error\n"
+                message += f"  Use get_zotero_collections to verify keys"
+            
+            return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
-            logger.error(f"Move failed: {e}")
-            return [types.TextContent(type="text", text=f"Move error: {e}")]
-
+            logger.error(f"Failed to move item: {e}")
+            return [types.TextContent(type="text", text=f"Error moving item: {e}")]
+    
     elif name == "search_arxiv_api":
+        query = arguments.get("query", "").strip()
+        max_results = arguments.get("max_results", 5)
+        
+        if not query:
+            return [types.TextContent(type="text", text="Missing search query")]
+        
         try:
-            query = arguments.get("query", "").strip()
-            if not query:
-                return [types.TextContent(type="text", text="Please provide a search query")]
-
-            max_results = arguments.get("max_results", 5)
-
-            from .extractors.arxiv_extractor import search_arxiv
-            result = search_arxiv(query, max_results=max_results)
-
-            if "error" in result:
-                return [types.TextContent(type="text", text=f"Search failed: {result['error']}")]
-
-            entries = result.get("entries", [])
-            total = result.get("total_results", len(entries))
-
-            message = f"arXiv Search Results for '{query}'\n\n"
-            message += f"Total found: {total}\n\n"
-
-            for i, entry in enumerate(entries, 1):
-                title = entry.get('title', 'Untitled')
-                arxiv_id = entry.get('arxiv_id', '')
-                authors = entry.get('authors', [])[:3]
-                published = entry.get('published', '')[:10]
-
-                message += f"{i}. **{title}**\n"
-                message += f"   arXiv ID: {arxiv_id}\n"
-                message += f"   Authors: {', '.join(authors)}\n"
-                if published:
-                    message += f"   Published: {published}\n"
-                if entry.get('links', {}).get('pdf'):
-                    message += f"   PDF: {entry['links']['pdf']}\n"
-                message += "\n"
-
+            if max_results > 50:
+                max_results = 50
+            elif max_results < 1:
+                max_results = 1
+            
+            results = zotero_connector.search_arxiv(query, max_results=max_results)
+            
+            if not results:
+                message = f"No results found for: {query}\n\n"
+                message += f"Try different search terms"
+                return [types.TextContent(type="text", text=message)]
+            
+            message = f"arXiv Search Results for '{query}' ({len(results)} items)\n\n"
+            
+            for i, paper in enumerate(results, 1):
+                title = paper.get('title', 'Untitled')
+                arxiv_id = paper.get('id', 'Unknown')
+                date = paper.get('published', 'Unknown date')
+                authors = paper.get('authors', [])
+                
+                message += f"{i}. {title}\n"
+                message += f"   ID: {arxiv_id}\n"
+                message += f"   Date: {date}\n"
+                if authors:
+                    author_names = [a.get('name', '') for a in authors[:3]]
+                    message += f"   Authors: {', '.join(author_names)}\n"
+                message += f"   Link: https://arxiv.org/abs/{arxiv_id}\n\n"
+            
+            message += f"Use save_paper_to_zotero with the arXiv URL to save papers"
+            
             return [types.TextContent(type="text", text=message)]
-
+            
         except Exception as e:
-            logger.error(f"arXiv search failed: {e}")
-            return [types.TextContent(type="text", text=f"arXiv search error: {e}")]
-
+            logger.error(f"Failed to search arXiv: {e}")
+            return [types.TextContent(type="text", text=f"Error searching arXiv: {e}")]
+    
     elif name == "validate_zotero_item":
+        item_key = arguments.get("item_key", "").strip()
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-
-            result = zotero_connector.validate_item_with_arxiv(item_key)
-
-            if not result.get("success"):
-                error_msg = result.get("error", "Unknown error")
-                if result.get("has_doi") is False:
-                    return [types.TextContent(type="text", text=f"No DOI found in this item.\n\nItem Key: {item_key}\n\nThis validation tool requires items with DOIs that point to arXiv papers.")]
-
-                return [types.TextContent(type="text", text=f"Validation failed: {error_msg}")]
-
-            differences = result.get("differences", {})
-            is_match = result.get("is_match", False)
-
-            message = f"Validation Report for Item: {item_key}\n\n"
-            message += f"DOI: {result.get('doi', 'N/A')}\n"
-            message += f"arXiv URL: {result.get('arxiv_url', 'N/A')}\n\n"
-
-            if is_match:
-                message += "Status: PERFECT MATCH\n"
-                message += "The Zotero metadata matches the arXiv record exactly.\n"
+            item = zotero_connector.get_item(item_key)
+            
+            if not item:
+                return [types.TextContent(type="text", text=f"Item not found: {item_key}")]
+            
+            doi = item.get('DOI', '')
+            
+            if not doi or 'arxiv' not in doi.lower():
+                return [types.TextContent(type="text", text=f"Item {item_key} does not have an arXiv DOI. Validation requires arXiv papers.")]
+            
+            arxiv_id = doi.replace('10.48550/arXiv.', '')
+            
+            metadata = zotero_connector._extract_arxiv_metadata(f"https://arxiv.org/abs/{arxiv_id}")
+            
+            if 'error' in metadata:
+                return [types.TextContent(type="text", text=f"Failed to fetch arXiv metadata: {metadata['error']}")]
+            
+            differences = []
+            
+            zotero_title = item.get('title', '').strip()
+            arxiv_title = metadata.get('title', '').strip().replace('\n', ' ')
+            
+            if zotero_title.lower() != arxiv_title.lower():
+                differences.append(f"Title:\n  Zotero: {zotero_title}\n  arXiv: {arxiv_title}\n")
+            
+            zotero_date = item.get('date', '')
+            arxiv_date = metadata.get('date', '')
+            
+            if zotero_date and zotero_date != arxiv_date:
+                differences.append(f"Date:\n  Zotero: {zotero_date}\n  arXiv: {arxiv_date}\n")
+            
+            message = f"Validation Results for {item_key}\n\n"
+            message += f"DOI: {doi}\n"
+            message += f"arXiv ID: {arxiv_id}\n\n"
+            
+            if differences:
+                message += f"Found {len(differences)} difference(s):\n\n"
+                for diff in differences:
+                    message += f"{diff}\n"
+                message += f"Use validate_and_update_item to automatically update"
             else:
-                message += f"Status: DIFFERENCES FOUND ({len(differences)} fields)\n\n"
-                message += "Differences:\n"
-                message += "-" * 50 + "\n"
-
-                for field, values in differences.items():
-                    zotero_val = values[0].get("value", "N/A") if len(values) > 0 else "N/A"
-                    arxiv_val = values[1].get("value", "N/A") if len(values) > 1 else "N/A"
-
-                    field_name = field.capitalize()
-                    message += f"\n{field_name}:\n"
-                    message += f"  Zotero: {zotero_val[:100]}{'...' if len(str(zotero_val)) > 100 else ''}\n"
-                    message += f"  arXiv:  {arxiv_val[:100]}{'...' if len(str(arxiv_val)) > 100 else ''}\n"
-
-            message += "\n" + "-" * 50 + "\n"
-            message += "\nTo update Zotero with arXiv data, use:\n"
-            message += f"  validate_and_update_item with item_key='{item_key}' and apply_updates=true\n"
-
+                message += f"No differences found. Metadata matches arXiv!"
+            
             return [types.TextContent(type="text", text=message)]
-
+            
         except Exception as e:
-            logger.error(f"Validation failed: {e}")
-            return [types.TextContent(type="text", text=f"Validation error: {e}")]
-
+            logger.error(f"Failed to validate item: {e}")
+            return [types.TextContent(type="text", text=f"Error validating item: {e}")]
+    
     elif name == "validate_and_update_item":
+        item_key = arguments.get("item_key", "").strip()
+        apply_updates = arguments.get("apply_updates", False)
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
         try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-
-            apply_updates = arguments.get("apply_updates", False)
-
-            result = zotero_connector.validate_and_update_item(item_key, apply_updates=apply_updates)
-
-            if not result.get("success"):
-                return [types.TextContent(type="text", text=f"Validation failed: {result.get('error', 'Unknown error')}")]
-
-            differences = result.get("differences", {})
-            is_match = result.get("is_match", False)
-
-            message = f"Validation & Update Report\n\n"
-            message += f"Item Key: {item_key}\n"
-            message += f"DOI: {result.get('doi', 'N/A')}\n\n"
-
-            if is_match:
-                message += "Status: PERFECT MATCH\n"
-                message += "No differences found between Zotero and arXiv.\n"
-            else:
-                if apply_updates and result.get("update_result", {}).get("success"):
-                    updates_applied = result.get("updates_applied", {})
-                    message += f"Status: UPDATED\n"
-                    message += f"Applied {len(updates_applied)} updates from arXiv:\n\n"
-                    for field, value in updates_applied.items():
-                        message += f"  - {field}: {value[:50]}{'...' if len(str(value)) > 50 else ''}\n"
+            item = zotero_connector.get_item(item_key)
+            
+            if not item:
+                return [types.TextContent(type="text", text=f"Item not found: {item_key}")]
+            
+            doi = item.get('DOI', '')
+            
+            if not doi or 'arxiv' not in doi.lower():
+                return [types.TextContent(type="text", text=f"Item {item_key} does not have an arXiv DOI. Validation requires arXiv papers.")]
+            
+            arxiv_id = doi.replace('10.48550/arXiv.', '')
+            
+            metadata = zotero_connector._extract_arxiv_metadata(f"https://arxiv.org/abs/{arxiv_id}")
+            
+            if 'error' in metadata:
+                return [types.TextContent(type="text", text=f"Failed to fetch arXiv metadata: {metadata['error']}")]
+            
+            updates = {}
+            zotero_title = item.get('title', '').strip()
+            arxiv_title = metadata.get('title', '').strip().replace('\n', ' ')
+            
+            if zotero_title.lower() != arxiv_title.lower():
+                updates['title'] = arxiv_title
+            
+            zotero_date = item.get('date', '')
+            arxiv_date = metadata.get('date', '')
+            
+            if zotero_date and zotero_date != arxiv_date:
+                updates['date'] = arxiv_date
+            
+            message = f"Validation Results for {item_key}\n\n"
+            message += f"DOI: {doi}\n"
+            message += f"arXiv ID: {arxiv_id}\n\n"
+            
+            if not updates:
+                message += f"No updates needed. Metadata matches arXiv!"
+                if apply_updates:
+                    message += f"\nNothing to update."
+                return [types.TextContent(type="text", text=message)]
+            
+            if apply_updates:
+                success = zotero_connector.update_item(item_key, updates)
+                
+                if success:
+                    message += f"Applied {len(updates)} update(s):\n\n"
+                    if 'title' in updates:
+                        message += f"Title: Updated to arXiv version\n"
+                    if 'date' in updates:
+                        message += f"Date: Updated to {arxiv_date}\n"
+                    message += f"\nZotero item updated successfully!"
                 else:
-                    message += f"Status: DIFFERENCES FOUND (would update {len(differences)} fields)\n\n"
-                    message += "Differences:\n"
-                    for field, values in differences.items():
-                        zotero_val = values[0].get("value", "N/A")[:50]
-                        arxiv_val = values[1].get("value", "N/A")[:50]
-                        message += f"  {field}: {zotero_val} -> {arxiv_val}\n"
-
-                    message += "\nTo apply these updates, run:\n"
-                    message += f"  validate_and_update_item with item_key='{item_key}' and apply_updates=true\n"
-
-            return [types.TextContent(type="text", text=message)]
-
-        except Exception as e:
-            logger.error(f"Validation and update failed: {e}")
-            return [types.TextContent(type="text", text=f"Error: {e}")]
-
-    elif name == "fetch_pdf":
-        try:
-            if not zotero_connector.is_running():
-                return [types.TextContent(type="text", text="Zotero is not running. Please start the Zotero desktop app")]
-
-            item_key = arguments.get("item_key", "").strip()
-            if not item_key:
-                return [types.TextContent(type="text", text="Please provide an item key")]
-
-            source = arguments.get("source", "auto")
-            save_to_zotero = arguments.get("save_to_zotero", True)
-
-            from .pdf_fetcher import PDFFetcher
-            fetcher = PDFFetcher(zotero_connector)
-
-            result = fetcher.fetch_pdf(item_key, source=source, save_to_zotero=save_to_zotero)
-
-            if result.get("success"):
-                message = f"PDF Fetch Successful!\n\n"
-                message += f"Item Key: {item_key}\n"
-                message += f"Source: {result.get('source', 'Unknown')}\n"
-                message += f"PDF Size: {result.get('size', 'N/A')} bytes\n"
-                if result.get('title'):
-                    message += f"Title: {result['title']}\n"
-                if save_to_zotero and result.get("attachment_added"):
-                    message += f"\nStatus: PDF attached to Zotero item\n"
-                elif save_to_zotero:
-                    message += f"\nStatus: {result.get('message', 'PDF fetched but not attached')}\n"
+                    message += f"Failed to apply updates to {item_key}"
+                
                 return [types.TextContent(type="text", text=message)]
             else:
-                return [types.TextContent(type="text", text=f"PDF fetch failed: {result.get('error', 'Unknown error')}\n\nSuggestions:\n- Try a different source (arxiv, open_access, scihub, annas_archive)\n- Check if the paper is available through open access\n- Ensure the item has a valid DOI or URL")]
-
-        except ImportError as e:
-            return [types.TextContent(type="text", text=f"PDF fetcher not available: {e}")]
+                message += f"Found {len(updates)} update(s) available:\n\n"
+                if 'title' in updates:
+                    message += f"Title:\n  Current: {zotero_title}\n  arXiv: {arxiv_title}\n\n"
+                if 'date' in updates:
+                    message += f"Date:\n  Current: {zotero_date}\n  arXiv: {arxiv_date}\n\n"
+                message += f"Use apply_updates=true to apply these changes"
+                return [types.TextContent(type="text", text=message)]
+            
         except Exception as e:
-            logger.error(f"PDF fetch failed: {e}")
-            return [types.TextContent(type="text", text=f"PDF fetch error: {e}")]
-
+            logger.error(f"Failed to validate and update item: {e}")
+            return [types.TextContent(type="text", text=f"Error: {e}")]
+    
+    elif name == "fetch_pdf":
+        item_key = arguments.get("item_key", "").strip()
+        source = arguments.get("source", "auto")
+        save_to_zotero = arguments.get("save_to_zotero", True)
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
+        try:
+            item = zotero_connector.get_item(item_key)
+            
+            if not item:
+                return [types.TextContent(type="text", text=f"Item not found: {item_key}")]
+            
+            title = item.get('title', 'Unknown')
+            message = f"Fetching PDF for: {title}\n\n"
+            
+            pdf_result = zotero_connector.fetch_pdf_for_item(item_key, source=source)
+            
+            if pdf_result.get("success"):
+                message += f"PDF fetched successfully!\n"
+                message += f"Source: {pdf_result.get('source', 'Unknown')}\n"
+                message += f"Size: {pdf_result.get('size', 'Unknown')}\n"
+                
+                if pdf_result.get("saved_to_zotero"):
+                    message += f"Status: Saved to Zotero as attachment\n"
+                elif save_to_zotero:
+                    message += f"Status: Downloaded but not saved to Zotero\n"
+                else:
+                    message += f"Status: Downloaded only\n"
+                
+                if pdf_result.get("file_path"):
+                    message += f"Path: {pdf_result['file_path']}\n"
+                
+                message += f"\nTip: Check Zotero to view the PDF attachment"
+            else:
+                error_msg = pdf_result.get("error", "Unknown error")
+                message += f"Failed to fetch PDF: {error_msg}\n\n"
+                
+                if "open access" in error_msg.lower() or "arXiv" in error_msg:
+                    message += f"Possible causes:\n"
+                    message += f"  Paper is behind paywall\n"
+                    message += f"  arXiv PDF not yet available\n"
+                    message += f"  Publisher doesn't provide open access\n\n"
+                    message += f"Suggestions:\n"
+                    message += f"  Try alternative source: arXiv, PubMed, etc.\n"
+                    message += f"  Check if PDF is available on publisher website"
+                else:
+                    message += f"Network or server error. Try again later."
+            
+            return [types.TextContent(type="text", text=message)]
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch PDF: {e}")
+            return [types.TextContent(type="text", text=f"Error fetching PDF: {e}")]
+    
     else:
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
-@server.read_resource()
-async def handle_read_resource(uri: str) -> str:
-    """读取资源"""
-    if uri == "zotero://status":
-        status = {
-            "running": zotero_connector.is_running(),
-            "version": zotero_connector.get_version(),
-            "collections_count": len(zotero_connector.get_collections()) if zotero_connector.is_running() else 0
-        }
-        return json.dumps(status, indent=2)
-    
-    elif uri == "zotero://collections":
-        collections = zotero_connector.get_collections() if zotero_connector.is_running() else []
-        return json.dumps(collections, indent=2, ensure_ascii=False)
-    
-    else:
-        raise ValueError(f"未知资源: {uri}")
-
 async def main():
-    """启动服务器"""
-    logger.info("🔗 启动ZotLink服务器...")
-    
+    """Main entry point"""
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -1696,17 +1272,14 @@ async def main():
                 server_version="1.0.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
-                    experimental_capabilities={},
-                ),
-            ),
+                    experimental_capabilities={}
+                )
+            )
         )
 
 def run():
-    """同步入口（供 console_scripts 调用）"""
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    """Entry point for uvx"""
+    asyncio.run(main())
 
 if __name__ == "__main__":
-    run()
+    asyncio.run(main())

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-🔗 ZotLink 基础提取器
+Base extractor for ZotLink.
 
-定义所有学术数据库提取器的通用接口
+Defines the common interface for all academic database extractors.
 """
 
 from abc import ABC, abstractmethod
@@ -10,21 +10,23 @@ from typing import Dict, Optional, List
 import requests
 import logging
 
+from ..utils import BrowserConfig
+
 logger = logging.getLogger(__name__)
 
 class BaseExtractor(ABC):
-    """学术数据库提取器基类"""
+    """Base class for academic database extractors."""
     
     def __init__(self, session: Optional[requests.Session] = None):
         """
-        初始化提取器
+        Initialize extractor.
         
         Args:
-            session: 可选的requests会话，用于保持cookies等状态
+            session: Optional requests session for maintaining cookies/state
         """
         self.session = session or requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': BrowserConfig.USER_AGENT
         })
     
     @abstractmethod

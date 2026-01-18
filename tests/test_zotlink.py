@@ -501,22 +501,23 @@ class TestAuthorParsing:
     """Test author name parsing logic"""
 
     @pytest.fixture
-    def connector(self):
-        return ZoteroConnector()
+    def author_parser(self):
+        from zotlink.utils import AuthorParser
+        return AuthorParser()
 
-    def test_split_comma_authors_single_author(self, connector):
+    def test_split_comma_authors_single_author(self, author_parser):
         """Test splitting single author in Last, First format"""
-        result = connector._split_comma_authors("Smith, John")
+        result = author_parser._split_comma_authors("Smith, John")
         assert result == ["Smith, John"]
 
-    def test_split_comma_authors_two_authors(self, connector):
+    def test_split_comma_authors_two_authors(self, author_parser):
         """Test splitting two authors in First Last, First Last format"""
-        result = connector._split_comma_authors("John Smith, Jane Doe")
+        result = author_parser._split_comma_authors("John Smith, Jane Doe")
         assert len(result) == 2
 
-    def test_split_comma_authors_multiple(self, connector):
+    def test_split_comma_authors_multiple(self, author_parser):
         """Test splitting multiple authors"""
-        result = connector._split_comma_authors("John Smith, Jane Doe, Bob Chen")
+        result = author_parser._split_comma_authors("John Smith, Jane Doe, Bob Chen")
         assert len(result) == 3
 
 
@@ -763,6 +764,45 @@ class TestPDFValidationIntegration:
         fetch_result = fetcher.fetch_pdf(item_key, source="arxiv", save_to_zotero=False)
 
         assert "success" in fetch_result
+
+
+class TestMCPServerEntryPoints:
+    """Test MCP server entry points and tool definitions"""
+
+    def test_run_function_exists(self):
+        """Test that run function exists and is importable"""
+        from zotlink.zotero_mcp_server import run
+        assert callable(run)
+
+    def test_save_paper_by_doi_tool_defined(self):
+        """Test that save_paper_by_doi tool is registered"""
+        from zotlink.zotero_mcp_server import handle_list_tools
+        import asyncio
+        tools = asyncio.run(handle_list_tools())
+        tool_names = [t.name for t in tools]
+        assert "save_paper_by_doi" in tool_names
+
+    def test_get_cookie_sync_status_removed(self):
+        """Test that internal tools are not exposed"""
+        from zotlink.zotero_mcp_server import handle_list_tools
+        import asyncio
+        tools = asyncio.run(handle_list_tools())
+        tool_names = [t.name for t in tools]
+        assert "get_cookie_sync_status" not in tool_names
+        assert "set_database_cookies" not in tool_names
+        assert "generate_bookmark_code" not in tool_names
+        assert "get_cookie_guide" not in tool_names
+
+    def test_tools_have_english_descriptions(self):
+        """Test that all tool descriptions are in English"""
+        from zotlink.zotero_mcp_server import handle_list_tools
+        import asyncio
+        tools = asyncio.run(handle_list_tools())
+        for tool in tools:
+            desc = tool.description.lower()
+            chinese_indicators = ["保存", "获取", "论文", "集合", "数据库", "认证", "连接"]
+            for indicator in chinese_indicators:
+                assert indicator not in desc, f"Tool '{tool.name}' has Chinese description"
 
 
 if __name__ == "__main__":

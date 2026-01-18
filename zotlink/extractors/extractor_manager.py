@@ -20,6 +20,7 @@ from .browser_extractor import BrowserExtractor, PLAYWRIGHT_AVAILABLE
 from .biorxiv_direct_extractor import BioRxivDirectExtractor
 from .arxiv_extractor import ArxivAPIExtractor
 from .preprint_extractor import PreprintExtractor
+from ..utils import AntiCrawlerDomains
 
 logger = logging.getLogger(__name__)
 
@@ -82,22 +83,7 @@ class ExtractorManager:
         """判断是否应该使用浏览器模式"""
         if not self.browser_available:
             return False
-            
-        domain = urlparse(url).netloc.lower()
-        browser_domains = [
-            'biorxiv.org',
-            'medrxiv.org', 
-            'chemrxiv.org',
-            'psyarxiv.com',
-            'osf.io',
-            'socarxiv.org'
-        ]
-        
-        for browser_domain in browser_domains:
-            if browser_domain in domain:
-                logger.info(f"🌐 检测到需要浏览器模式的域名: {domain}")
-                return True
-        return False
+        return AntiCrawlerDomains.requires_browser(url)
     
     async def extract_metadata(self, url: str) -> Dict[str, Any]:
         """

@@ -113,9 +113,7 @@ class EnhancedGenericExtractor(BaseExtractor):
         return "Enhanced Generic Extractor"
     
     def can_handle(self, url: str) -> bool:
-        """检查是否可以处理该URL"""
-        # 增强提取器可以处理任何URL，但会根据域名优化策略
-        return True
+        """Check if this extractor can handle the URL."""
         url_lower = url.lower()
         for domain_pattern in self.DOMAIN_CONFIGS.keys():
             if domain_pattern in url_lower:

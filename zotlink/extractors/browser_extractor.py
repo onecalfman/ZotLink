@@ -627,8 +627,8 @@ class BrowserExtractor(BaseExtractor):
                     if (titleEl) {
                         let title = titleEl.textContent.trim();
                         // 清理标题
-                        title = title.replace(/\s+/g, ' ');
-                        title = title.replace(/^\s*[-–]\s*/, ''); // 移除开头破折号
+                        title = title.replace(/\\s+/g, ' ');
+                        title = title.replace(/^\\s*[-–]\s*/, ''); // 移除开头破折号
                         if (title && title.length > 10) {
                             metadata.title = title;
                             console.log('🎯 浏览器提取器找到标题:', title, '使用选择器:', selector);

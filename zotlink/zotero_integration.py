@@ -16,7 +16,7 @@ import tempfile
 import shutil
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import logging
 import asyncio
 from datetime import datetime
@@ -36,6 +36,8 @@ except ImportError:
     except ImportError:
         EXTRACTORS_AVAILABLE = False
         logging.warning("Extractor manager not available，仅支持arXiv")
+
+from .utils import AuthorParser, DateParser
 
 logger = logging.getLogger(__name__)
 
@@ -441,6 +443,166 @@ class ZoteroConnector:
         
         return paper_info
 
+    def _build_paper_info_from_doi(self, doi: str) -> Dict[str, Any]:
+        """
+        Build paper info from a DOI string.
+        Supports arXiv DOIs (10.48550/arXiv.XXX) and published DOIs.
+        
+        Args:
+            doi: DOI string (e.g., '10.48550/arXiv.2301.00001' or '10.1038/nature12345')
+            
+        Returns:
+            Dictionary containing paper metadata, or {'error': ...} on failure
+        """
+        import re
+        
+        try:
+            # Clean up DOI
+            doi = doi.strip()
+            # Remove URL prefix if present
+            doi = re.sub(r'^https?://doi\.org/', '', doi, flags=re.IGNORECASE)
+            # Remove 'doi:' prefix
+            doi = re.sub(r'^doi:', '', doi, flags=re.IGNORECASE).strip()
+            
+            logger.info(f"解析DOI: {doi}")
+            
+            # Check if it's an arXiv DOI
+            arxiv_match = re.match(r'10\.48550/arXiv\.([\d]+\.[\d]+)', doi, re.IGNORECASE)
+            if arxiv_match:
+                arxiv_id = arxiv_match.group(1)
+                logger.info(f"检测到arXiv DOI，arXiv ID: {arxiv_id}")
+                
+                # Use arXiv API extractor
+                if self.extractor_manager:
+                    arxiv_extractor = self.extractor_manager.get_extractor_for_url(f"https://arxiv.org/abs/{arxiv_id}")
+                    if arxiv_extractor and hasattr(arxiv_extractor, '_query_arxiv_api'):
+                        metadata = arxiv_extractor._query_arxiv_api(arxiv_id)
+                        if 'error' not in metadata:
+                            return {
+                                'title': metadata.get('title', f'arXiv:{arxiv_id}'),
+                                'authors': metadata.get('authors_string', ''),
+                                'abstract': metadata.get('abstract', ''),
+                                'date': metadata.get('date', ''),
+                                'url': f"https://arxiv.org/abs/{arxiv_id}",
+                                'pdf_url': f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+                                'arxiv_id': arxiv_id,
+                                'doi': doi,
+                                'itemType': 'preprint',
+                                'extractor': 'arXiv'
+                            }
+                
+                # Fallback: direct API query
+                from .extractors.arxiv_extractor import ArxivAPIExtractor
+                arxiv_extractor = ArxivAPIExtractor()
+                metadata = arxiv_extractor._query_arxiv_api(arxiv_id)
+                if 'error' not in metadata:
+                    return {
+                        'title': metadata.get('title', f'arXiv:{arxiv_id}'),
+                        'authors': metadata.get('authors_string', ''),
+                        'abstract': metadata.get('abstract', ''),
+                        'date': metadata.get('date', ''),
+                        'url': f"https://arxiv.org/abs/{arxiv_id}",
+                        'pdf_url': f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+                        'arxiv_id': arxiv_id,
+                        'doi': doi,
+                        'itemType': 'preprint',
+                        'extractor': 'arXiv'
+                    }
+                else:
+                    return {'error': f'无法获取arXiv元数据: {metadata.get("error", "未知错误")}'}
+            
+            # Handle regular DOIs (crossref/Datacite)
+            crossref_url = f"https://api.crossref.org/works/{doi}"
+            response = self.session.get(crossref_url, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'message' in data:
+                    msg = data['message']
+                    
+                    title = ''
+                    if 'title' in msg and msg['title']:
+                        title = msg['title'][0]
+                    
+                    authors = []
+                    if 'author' in msg:
+                        for author in msg['author']:
+                            last = author.get('family', '')
+                            first = author.get('given', '')
+                            if last or first:
+                                authors.append(f"{last}, {first}".strip(', '))
+                    authors_str = '; '.join(authors)
+                    
+                    date = ''
+                    if 'published-print' in msg:
+                        date_parts = msg['published-print'].get('date-parts', [])
+                        if date_parts and date_parts[0]:
+                            date = '/'.join(str(p) for p in date_parts[0])
+                    elif 'published-online' in msg:
+                        date_parts = msg['published-online'].get('date-parts', [])
+                        if date_parts and date_parts[0]:
+                            date = '/'.join(str(p) for p in date_parts[0])
+                    
+                    journal = ''
+                    if 'container-title' in msg and msg['container-title']:
+                        journal = msg['container-title'][0]
+                    
+                    abstract = ''
+                    if 'abstract' in msg:
+                        # Crossref abstracts are often JATS XML
+                        abstract = re.sub(r'<[^>]+>', '', msg['abstract'])
+                        abstract = re.sub(r'\s+', ' ', abstract).strip()
+                    
+                    return {
+                        'title': title,
+                        'authors': authors_str,
+                        'abstract': abstract,
+                        'date': date,
+                        'url': f"https://doi.org/{doi}",
+                        'pdf_url': '',
+                        'doi': doi,
+                        'itemType': 'journalArticle',
+                        'publicationTitle': journal,
+                        'extractor': 'Crossref'
+                    }
+            else:
+                # Try semantic scholar as fallback
+                ss_url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=title,authors,year,abstract,url,externalIds"
+                ss_response = self.session.get(ss_url, timeout=30)
+                if ss_response.status_code == 200:
+                    data = ss_response.json()
+                    if data.get('title'):
+                        authors_str = ''
+                        if 'authors' in data:
+                            authors = []
+                            for author in data.get('authors', []):
+                                name = author.get('name', '')
+                                if name:
+                                    parts = name.split()
+                                    if len(parts) >= 2:
+                                        authors.append(f"{parts[-1]}, {' '.join(parts[:-1])}")
+                                    else:
+                                        authors.append(name)
+                            authors_str = '; '.join(authors)
+                        
+                        return {
+                            'title': data.get('title', ''),
+                            'authors': authors_str,
+                            'abstract': data.get('abstract', ''),
+                            'date': str(data.get('year', '')) if data.get('year') else '',
+                            'url': data.get('url', f"https://doi.org/{doi}"),
+                            'pdf_url': '',
+                            'doi': doi,
+                            'itemType': 'journalArticle',
+                            'extractor': 'SemanticScholar'
+                        }
+            
+            return {'error': f'无法解析DOI: {doi}'}
+            
+        except Exception as e:
+            logger.error(f"DOI解析失败: {e}")
+            return {'error': f'DOI解析失败: {e}'}
+
     def _find_zotero_database(self) -> Optional[Path]:
         """Find Zotero database, prefer override path。"""
         # 覆盖优先
@@ -681,142 +843,25 @@ class ZoteroConnector:
                 "message": f"Save to Zotero失败: {e}"
             }
     
-    def _split_comma_authors(self, authors_str: str) -> list:
-        """
-        Smart split comma-separated authors
-        
-        支持两种格式：
-        1. "First Last, First Last" - 逗号分隔不同作者
-        2. "Last, First, Last, First" - 连续的"姓, 名"格式
-        """
-        parts = [p.strip() for p in authors_str.split(',')]
-        
-        # 如果只有1-2个部分
-        if len(parts) <= 2:
-            # 检查是否是 "First Last, First Last" 格式
-            # 启发式规则：如果第一部分和第二部分都包含空格，可能是两个独立作者
-            if len(parts) == 2 and ' ' in parts[0] and ' ' in parts[1]:
-                # "John Smith, Jane Doe" -> 两个作者
-                return parts
-            else:
-                # "Smith, John" -> 一个作者
-                return [authors_str]
-        
-        # 多个部分的情况
-        # 启发式规则1：检查是否所有部分都包含空格（表示 "First Last" 格式）
-        all_have_spaces = all(' ' in part for part in parts)
-        if all_have_spaces:
-            # "John Smith, Jane Doe, Bob Chen" -> 三个独立作者
-            return parts
-        
-        # 启发式规则2：检查是否是连续的"姓, 名"格式
-        # 如果部分数量是偶数，且交替出现"无空格"和"可能有空格"的模式
-        if len(parts) % 2 == 0:
-            # 检查奇数索引（姓）是否通常不含空格
-            odd_indices_no_space = sum(1 for i in range(0, len(parts), 2) if ' ' not in parts[i])
-            if odd_indices_no_space > len(parts) // 4:  # 至少25%的"姓"不含空格
-                # 很可能是 "Last, First, Last, First" 格式
-                author_names = []
-                for i in range(0, len(parts), 2):
-                    if i + 1 < len(parts):
-                        author_names.append(f"{parts[i]}, {parts[i+1]}")
-                return author_names
-        
-        # 默认：如果有多个逗号但无法确定，尝试按空格数判断
-        # 如果大部分部分都有空格，可能是独立作者
-        parts_with_space = sum(1 for part in parts if ' ' in part)
-        if parts_with_space > len(parts) * 0.6:  # 超过60%有空格
-            return parts
-        
-        # 无法确定，保持原样
-        return [authors_str]
-    
     def _convert_to_zotero_format(self, paper_info: Dict) -> Dict:
         """Convert paper info to Zotero format"""
         
-        # Parse authors - improved logic supports multiple formats
+        # Parse authors - use centralized AuthorParser
         authors = []
         
-        # 🔧 修复：优先使用已经格式化的 creators（Zotero格式数组）
-        # 部分提取器（如 PreprintExtractor, BioRxivDirectExtractor）直接返回 Zotero 格式
+        # Use already formatted creators (Zotero format array)
         if paper_info.get('creators') and isinstance(paper_info['creators'], list):
-            logger.debug("✅ 检测到 creators 字段（Zotero格式），直接使用")
-            authors = paper_info['creators'][:15]  # 限制作者数量
-        
-        # 否则解析 authors 字符串格式（arXiv, Generic 等提取器使用）
+            authors = paper_info['creators'][:15]
         elif paper_info.get('authors'):
-            authors_str = paper_info['authors']
-            
-            # 🔧 修复: 正确分割作者列表，支持多种格式
-            if ';' in authors_str:
-                # 标准格式：使用分号分隔
-                author_names = authors_str.split(';')
-            elif ' and ' in authors_str:
-                # 使用 "and" 连接的格式
-                author_names = [a.strip() for a in authors_str.split(' and ')]
-            else:
-                # 处理逗号分隔的情况 - 智能判断格式
-                author_names = self._split_comma_authors(authors_str)
-            
-            for author_name in author_names[:15]:  # 限制作者数量
-                author_name = author_name.strip()
-                if not author_name or author_name == 'Unknown Author':
-                    continue
-                
-                # 解析"姓, 名"格式
-                if ',' in author_name:
-                    parts = author_name.split(',', 1)  # 只分割第一个逗号
-                    lastName = parts[0].strip()
-                    firstName = parts[1].strip()
-                else:
-                    # 处理"名 姓"格式
-                    parts = author_name.split()
-                    if len(parts) >= 2:
-                        firstName = ' '.join(parts[:-1])
-                        lastName = parts[-1]
-                    else:
-                        firstName = ""
-                        lastName = author_name
-                
-                # 确保不为空
-                if firstName or lastName:
-                    authors.append({
-                        "creatorType": "author",
-                        "firstName": firstName,
-                        "lastName": lastName
-                    })
+            authors = AuthorParser.parse_authors_to_zotero(paper_info['authors'], max_authors=15)
         
-        # Parse date
-        date = paper_info.get('date', '')
-        if date and date != 'Unknown Date':
-            # 尝试标准化日期格式
-            try:
-                # 处理arxiv和其他常见的日期格式
-                # 格式1: "12 Jun 2017"
-                date_match = re.search(r'(\d{1,2})\s+(\w+)\s+(\d{4})', date)
-                if date_match:
-                    day, month_name, year = date_match.groups()
-                    months = {
-                        'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
-                        'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
-                        'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
-                    }
-                    month = months.get(month_name[:3], '01')
-                    date = f"{year}-{month}-{day.zfill(2)}"
-                # 格式2: "2017/06/12" 或 "2017-06-12"
-                elif re.search(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', date):
-                    # 已经是标准格式，保持不变
-                    pass
-                # 格式3: 只有年份 "2017"
-                elif re.search(r'^\d{4}$', date):
-                    date = f"{date}-01-01"
-            except:
-                pass
+        # Parse date - use centralized DateParser
+        date = DateParser.normalize(paper_info.get('date', '') or '')
         
         # Determine item type 
         item_type = paper_info.get('itemType', 'journalArticle')
         if 'arxiv.org' in paper_info.get('url', ''):
-            item_type = 'preprint'  # arxiv论文使用preprint类型
+            item_type = 'preprint'
         
         # 构建Zotero项目
         zotero_item = {
