@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-🔗 ZotLink 提取器管理器
+ZotLink Extractor Manager
 
-统一管理不同学术数据库的提取器，现在支持浏览器驱动模式
+Unified management of extractors for different academic databases,
+now supporting browser-driven mode
 """
 
 import requests
@@ -17,6 +18,7 @@ from .cvf_extractor import CVFExtractor
 from .generic_extractor import GenericOpenAccessExtractor
 from .browser_extractor import BrowserExtractor, PLAYWRIGHT_AVAILABLE
 from .biorxiv_direct_extractor import BioRxivDirectExtractor
+from .arxiv_extractor import ArxivAPIExtractor
 from .preprint_extractor import PreprintExtractor
 
 logger = logging.getLogger(__name__)
@@ -41,13 +43,15 @@ class ExtractorManager:
             logger.warning("⚠️ 浏览器模式不可用，需要安装Playwright")
     
     def _register_extractors(self):
-        """注册所有提取器"""
+        """Register all available extractors"""
         try:
-            # 注册专用提取器 (优先级高)
-            # bioRxiv专用提取器 - 最高优先级
+            arxiv_extractor = ArxivAPIExtractor()
+            self.extractors.append(arxiv_extractor)
+            logger.info("Registered arXiv API extractor")
+
             biorxiv_extractor = BioRxivDirectExtractor(self.session)
             self.extractors.append(biorxiv_extractor)
-            logger.info("✅ 注册BioRxiv专用提取器")
+            logger.info("Registered BioRxiv extractor")
             
             # medRxiv/chemRxiv专用提取器
             preprint_extractor = PreprintExtractor(self.session)

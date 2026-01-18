@@ -1,6 +1,5 @@
 """
-浏览器驱动的PDF提取器
-用于解决开源数据库的反爬虫限制，如bioRxiv、OSF系列等
+Browser-driven PDF extractor for handling anti-crawler restrictions on open access databases
 """
 
 import asyncio
@@ -16,6 +15,7 @@ try:
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
     async_playwright = None
+    Page = type("Page", (), {})  # Fallback type when playwright not available
 
 from .base_extractor import BaseExtractor
 
@@ -708,7 +708,7 @@ class BrowserExtractor(BaseExtractor):
                 pdf_urls.extend(download_links)
             
             # 方法3: 查找页面中所有可能的PDF相关按钮
-            button_links = await page.eval_on_selector_all('button, a.btn, .download-btn, .pdf-btn', """
+            button_links = await page.eval_on_selector_all(r'button, a.btn, .download-btn, .pdf-btn', r"""
                 elements => {
                     const results = [];
                     elements.forEach(el => {
@@ -719,7 +719,7 @@ class BrowserExtractor(BaseExtractor):
                         if (text.includes('pdf') || text.includes('download') || onclick.includes('pdf')) {
                             if (href) results.push(href);
                             if (onclick && onclick.includes('http')) {
-                                const urlMatch = onclick.match(/https?:\/\/[^'"\\s)]+/);
+                                const urlMatch = onclick.match(r/https?:\/\/[^'"\\s)]+/);
                                 if (urlMatch) results.push(urlMatch[0]);
                             }
                         }

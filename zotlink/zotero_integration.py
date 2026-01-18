@@ -1,5 +1,5 @@
 """
-🔗 ZotLink Zotero集成模块
+ZotLink Zotero Integration Module
 
 扩展版本，支持多种学术数据库：
 - arXiv（无需认证）
@@ -35,7 +35,7 @@ except ImportError:
         EXTRACTORS_AVAILABLE = True
     except ImportError:
         EXTRACTORS_AVAILABLE = False
-        logging.warning("⚠️ 提取器管理器不可用，仅支持arXiv")
+        logging.warning("Extractor manager not available，仅支持arXiv")
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class ZoteroConnector:
     """ZotLink的Zotero连接器（扩展版本）"""
     
     def __init__(self):
-        """初始化连接器"""
+        """Initialize connector"""
         self.base_url = "http://127.0.0.1:23119"
         self.session = requests.Session()
         self.session.headers.update({
@@ -61,13 +61,13 @@ class ZoteroConnector:
         # 初始化提取器管理器
         if EXTRACTORS_AVAILABLE:
             self.extractor_manager = ExtractorManager()
-            logger.info("✅ 提取器管理器初始化成功")
+            logger.info("Extractor manager initialized successfully")
         else:
             self.extractor_manager = None
-            logger.warning("⚠️ 提取器管理器不可用")
+            logger.warning("Extractor manager not available")
 
     def _load_config_overrides(self) -> None:
-        """从环境变量与配置文件加载Zotero路径覆盖设置。
+        """Load Zotero path overrides from env vars and config。
         优先级：环境变量 > Claude配置 > 本地配置文件 > 默认探测
         支持：
           - 环境变量 ZOTLINK_ZOTERO_ROOT 指定Zotero根目录（推荐，自动推导数据库和存储路径）
@@ -88,14 +88,14 @@ class ZoteroConnector:
                     
                     if candidate_db.exists():
                         self._zotero_db_override = candidate_db
-                        logger.info(f"🔧 从Zotero根目录自动推导数据库路径: {candidate_db}")
+                        logger.info(f"Auto-detected DB path from Zotero root: {candidate_db}")
                     
                     if candidate_storage.exists():
                         self._zotero_storage_dir = candidate_storage
-                        logger.info(f"🔧 从Zotero根目录自动推导存储目录: {candidate_storage}")
+                        logger.info(f"Auto-detected storage dir from Zotero root: {candidate_storage}")
                     
                     if not candidate_db.exists() and not candidate_storage.exists():
-                        logger.warning(f"⚠️ Zotero根目录 {root_path} 下未找到预期的数据库或存储目录")
+                        logger.warning(f"Zotero root does not contain expected database or storage")
                 else:
                     logger.warning(f"⚠️ 环境变量ZOTLINK_ZOTERO_ROOT目录不存在: {root_path}")
             
@@ -105,7 +105,7 @@ class ZoteroConnector:
                 candidate = Path(os.path.expanduser(env_db))
                 if candidate.exists():
                     self._zotero_db_override = candidate
-                    logger.info(f"🔧 使用环境变量ZOTLINK_ZOTERO_DB覆盖Zotero数据库路径: {candidate}")
+                    logger.info(f"Using env var to override Zotero DB path: {candidate}")
                 else:
                     logger.warning(f"⚠️ 环境变量ZOTLINK_ZOTERO_DB路径不存在: {candidate}")
             
@@ -135,7 +135,7 @@ class ZoteroConnector:
                             cfg_db_path = Path(os.path.expanduser(cfg_db))
                             if cfg_db_path.exists():
                                 self._zotero_db_override = cfg_db_path
-                                logger.info(f"🔧 使用配置文件覆盖Zotero数据库路径: {cfg_db_path}")
+                                logger.info(f"Using config to override Zotero DB path: {cfg_db_path}")
                             else:
                                 logger.warning(f"⚠️ 配置文件中database_path不存在: {cfg_db_path}")
 
@@ -145,7 +145,7 @@ class ZoteroConnector:
                             cfg_storage_path = Path(os.path.expanduser(cfg_storage))
                             if cfg_storage_path.exists():
                                 self._zotero_storage_dir = cfg_storage_path
-                                logger.info(f"🔧 使用配置文件指定storage目录: {cfg_storage_path}")
+                                logger.info(f"Using config to specify storage directory: {cfg_storage_path}")
                             else:
                                 logger.warning(f"⚠️ 配置文件中storage_dir不存在: {cfg_storage_path}")
                 except Exception as e:
@@ -154,7 +154,7 @@ class ZoteroConnector:
             logger.warning(f"⚠️ 加载Zotero路径覆盖设置失败: {e}")
 
     def _load_claude_config(self) -> None:
-        """从Claude配置文件加载Zotero路径设置。
+        """Load Zotero paths from Claude config。
         支持macOS/Linux和Windows的Claude配置路径。
         """
         try:
@@ -177,33 +177,33 @@ class ZoteroConnector:
                         
                         # Claude配置文件存在，记录但不再读取非标准MCP字段
                         # 推荐使用env环境变量方式配置Zotero路径
-                        logger.debug(f"📖 找到Claude配置文件: {config_path}")
-                        logger.info("💡 推荐在MCP配置中使用env环境变量设置Zotero路径")
+                        logger.debug(f"Found Claude config file: {config_path}")
+                        logger.info("Recommended: use env vars for Zotero paths in MCP config")
                         break
                         
                     except Exception as e:
-                        logger.warning(f"⚠️ 读取Claude配置文件失败 {config_path}: {e}")
+                        logger.warning(f"Failed to read Claude config {config_path}: {e}")
                         
         except Exception as e:
-            logger.warning(f"⚠️ 加载Claude配置失败: {e}")
+            logger.warning(f"Failed to load Claude config: {e}")
     
     def _extract_arxiv_metadata(self, arxiv_url: str) -> Dict:
-        """从arxiv URL提取详细的论文元数据"""
+        """Extract detailed paper metadata from arXiv URL"""
         try:
-            # 提取arxiv ID
+            # Extract arXiv ID
             arxiv_id_match = re.search(r'arxiv\.org/(abs|pdf)/([^/?]+)', arxiv_url)
             if not arxiv_id_match:
-                return {"error": "无法解析arxiv ID"}
+                return {"error": "Cannot parse arXiv ID"}
             
             arxiv_id = arxiv_id_match.group(2)
-            logger.info(f"提取arxiv ID: {arxiv_id}")
+            logger.info(f"Extract arXiv ID: {arxiv_id}")
             
-            # 获取arxiv摘要页面
+            # Get arXiv abstract page
             abs_url = f"https://arxiv.org/abs/{arxiv_id}"
             response = self.session.get(abs_url, timeout=10)
             
             if response.status_code != 200:
-                return {"error": f"无法访问arxiv页面: {response.status_code}"}
+                return {"error": f"Cannot access arXiv page: {response.status_code}"}
             
             html_content = response.text
             
@@ -214,7 +214,7 @@ class ZoteroConnector:
                 'pdf_url': f"https://arxiv.org/pdf/{arxiv_id}.pdf"
             }
             
-            # 提取标题
+            # Extract title
             title_match = re.search(r'<meta name="citation_title" content="([^"]+)"', html_content)
             if title_match:
                 metadata['title'] = title_match.group(1)
@@ -224,7 +224,7 @@ class ZoteroConnector:
                 if title_match:
                     metadata['title'] = title_match.group(1).replace('Title:', '').strip()
             
-            # 提取作者 - 改进版本
+            # Extract authors - improved version
             authors = []
             
             # 方法1: 使用citation_author元数据（最准确）
@@ -240,7 +240,7 @@ class ZoteroConnector:
                     if author_links:
                         authors = [author.strip() for author in author_links]
             
-            # 格式化作者列表 - 确保正确的姓名格式
+            # Format author list - 确保正确的姓名格式
             if authors:
                 formatted_authors = []
                 for author in authors:
@@ -263,7 +263,7 @@ class ZoteroConnector:
                 metadata['authors'] = []
                 metadata['authors_string'] = ''
             
-            # 提取摘要 - 改进版本
+            # Extract abstract - improved version
             abstract = None
             
             # 先尝试找到摘要区域
@@ -320,7 +320,7 @@ class ZoteroConnector:
             if abstract and len(abstract) > 20:
                 metadata['abstract'] = abstract
             
-            # 提取日期 - 改进版本
+            # Extract date - improved version
             date_match = re.search(r'<meta name="citation_date" content="([^"]+)"', html_content)
             if date_match:
                 metadata['date'] = date_match.group(1)
@@ -345,7 +345,7 @@ class ZoteroConnector:
                     except:
                         metadata['date'] = date_str
             
-            # 提取评论信息（页数、图表等）
+            # Extract comment info (pages, figures, etc.)
             comment = None
             
             # 方式1: 标准表格格式
@@ -374,7 +374,7 @@ class ZoteroConnector:
             if comment:
                 metadata['comment'] = comment
             
-            # 提取学科分类
+            # Extract subject classification
             subjects_matches = re.findall(r'<span class="primary-subject">([^<]+)</span>', html_content)
             if subjects_matches:
                 metadata['subjects'] = subjects_matches
@@ -384,12 +384,12 @@ class ZoteroConnector:
                 if subjects_matches:
                     metadata['subjects'] = subjects_matches
             
-            # 提取DOI（如果有）
+            # Extract DOI if available
             doi_match = re.search(r'<meta name="citation_doi" content="([^"]+)"', html_content)
             if doi_match:
                 metadata['doi'] = doi_match.group(1)
             
-            # 提取期刊信息（如果已发表）
+            # Extract journal info if published
             journal_match = re.search(r'<meta name="citation_journal_title" content="([^"]+)"', html_content)
             if journal_match:
                 metadata['published_journal'] = journal_match.group(1)
@@ -400,23 +400,23 @@ class ZoteroConnector:
             metadata.setdefault('date', time.strftime('%Y'))
             metadata.setdefault('abstract', '')
             
-            logger.info(f"成功提取arxiv元数据: {metadata.get('title', 'Unknown')}")
+            logger.info(f"Successfully extracted arXiv metadata: {metadata.get('title', 'Unknown')}")
             return metadata
             
         except Exception as e:
-            logger.error(f"提取arxiv元数据失败: {e}")
-            return {"error": f"元数据提取失败: {e}"}
+            logger.error(f"Failed to extract arXiv metadata: {e}")
+            return {"error": f"Metadata extraction failed: {e}"}
     
     def _enhance_paper_info_for_arxiv(self, paper_info: Dict) -> Dict:
-        """为arxiv论文增强元数据"""
+        """Enhance metadata for arXiv papers"""
         url = paper_info.get('url', '')
         
         if 'arxiv.org' in url:
-            logger.info("检测到arxiv论文，开始增强元数据...")
+            logger.info("Detected arXiv paper, enhancing metadata......")
             arxiv_metadata = self._extract_arxiv_metadata(url)
             
             if 'error' not in arxiv_metadata:
-                # 合并元数据，优先使用arxiv提取的信息
+                # Merge metadata, prefer arXiv extracted info
                 enhanced_info = paper_info.copy()
                 enhanced_info.update({
                     'title': arxiv_metadata.get('title', paper_info.get('title', '')),
@@ -434,18 +434,18 @@ class ZoteroConnector:
                     'published_journal': arxiv_metadata.get('published_journal', ''),  # 添加发表期刊
                 })
                 
-                logger.info(f"arxiv元数据增强完成: {enhanced_info.get('title', 'Unknown')}")
+                logger.info(f"arXiv metadata enhancement complete: {enhanced_info.get('title', 'Unknown')}")
                 return enhanced_info
             else:
-                logger.warning(f"arxiv元数据增强失败: {arxiv_metadata.get('error', 'Unknown')}")
+                logger.warning(f"arXiv metadata enhancement failed: {arxiv_metadata.get('error', 'Unknown')}")
         
         return paper_info
 
     def _find_zotero_database(self) -> Optional[Path]:
-        """查找Zotero数据库文件，优先使用覆盖路径。"""
+        """Find Zotero database, prefer override path。"""
         # 覆盖优先
         if self._zotero_db_override and Path(self._zotero_db_override).exists():
-            logger.info(f"找到Zotero数据库(覆盖): {self._zotero_db_override}")
+            logger.info(f"Found Zotero database(覆盖): {self._zotero_db_override}")
             return self._zotero_db_override
 
         # 按系统默认路径探测
@@ -478,22 +478,22 @@ class ZoteroConnector:
         for path in possible_paths:
             try:
                 if path.exists():
-                    logger.info(f"找到Zotero数据库: {path}")
+                    logger.info(f"Found Zotero database: {path}")
                     return path
             except Exception:
                 continue
         
-        logger.warning("未找到Zotero数据库文件")
+        logger.warning("未Found Zotero database文件")
         return None
 
     def _read_collections_from_db(self) -> List[Dict]:
-        """直接从数据库读取集合信息"""
+        """Read collections directly from database"""
         if not self._zotero_db_path or not self._zotero_db_path.exists():
             logger.error("Zotero数据库文件不存在")
             return []
         
         try:
-            # 创建临时副本以避免锁定问题
+            # Create temp copy to avoid locking issues
             with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as temp_file:
                 shutil.copy2(self._zotero_db_path, temp_file.name)
                 temp_db_path = temp_file.name
@@ -527,31 +527,31 @@ class ZoteroConnector:
                     collections.append(collection_data)
                 
                 conn.close()
-                logger.info(f"从数据库成功读取 {len(collections)} 个集合")
+                logger.info(f"Successfully read N collections from database")
                 return collections
                 
             finally:
-                # 清理临时文件
+                # Clean up temp files
                 try:
                     Path(temp_db_path).unlink()
                 except:
                     pass
                     
         except Exception as e:
-            logger.error(f"读取数据库集合失败: {e}")
+            logger.error(f"Failed to read database collections: {e}")
             return []
     
     def is_running(self) -> bool:
-        """检查Zotero是否在运行"""
+        """Check if Zotero is running"""
         try:
             response = self.session.get(f"{self.base_url}/connector/ping", timeout=2)
             return response.status_code == 200
         except Exception as e:
-            logger.debug(f"Zotero未运行或无法连接: {e}")
+            logger.debug(f"Zotero not running or cannot connect: {e}")
             return False
     
     def get_version(self) -> Optional[str]:
-        """获取Zotero版本信息"""
+        """Get Zotero version info"""
         try:
             if not self.is_running():
                 return None
@@ -564,27 +564,27 @@ class ZoteroConnector:
                 else:
                     return "unknown"
         except Exception as e:
-            logger.debug(f"获取Zotero版本失败: {e}")
+            logger.debug(f"Failed to get Zotero version: {e}")
             return "unknown"
     
     def get_collections(self) -> List[Dict]:
-        """获取所有集合
-        优先尝试直接读取数据库，备选API方式
+        """Get all collections
+        Try direct DB read first, fallback to API
         """
         try:
             if not self.is_running():
                 return []
             
-            # 首先尝试直接从数据库读取（新的解决方案！）
-            logger.info("尝试直接从数据库读取集合...")
+            # First try reading directly from database (new solution!)
+            logger.info("Attempting to read collections directly from database...")
             db_collections = self._read_collections_from_db()
             
             if db_collections:
-                logger.info(f"✅ 成功从数据库获取 {len(db_collections)} 个集合")
+                logger.info(f"Successfully got N collections from database")
                 return db_collections
             
-            # 如果数据库读取失败，回退到API方式
-            logger.info("数据库读取失败，尝试API方式...")
+            # If DB read fails, fallback to API
+            logger.info("Database read failed, trying API...")
             api_endpoints = [
                 "/api/users/local/collections",  # Zotero 7 本地API
                 "/connector/collections",        # 可能的Connector API
@@ -598,7 +598,7 @@ class ZoteroConnector:
                         try:
                             data = response.json()
                             if isinstance(data, list):
-                                logger.info(f"成功从端点获取集合: {endpoint}")
+                                logger.info(f"Successfully got collections from endpoint: {endpoint}")
                                 return data
                             elif isinstance(data, dict) and 'collections' in data:
                                 return data['collections']
@@ -608,17 +608,17 @@ class ZoteroConnector:
                     logger.debug(f"测试端点{endpoint}失败: {e}")
                     continue
             
-            logger.warning("无法通过API或数据库获取集合列表")
+            logger.warning("Cannot get collection list via API or database")
             return []
                 
         except Exception as e:
-            logger.error(f"获取Zotero集合失败: {e}")
+            logger.error(f"Failed to get Zotero collections: {e}")
             return []
     
     def save_item_to_zotero(self, paper_info: Dict, pdf_path: Optional[str] = None, 
                            collection_key: Optional[str] = None) -> Dict:
         """
-        保存论文到Zotero
+        Save paper to Zotero
         
         Args:
             paper_info: 论文信息字典
@@ -632,7 +632,7 @@ class ZoteroConnector:
             if not self.is_running():
                 return {
                     "success": False,
-                    "message": "Zotero未运行，请启动Zotero桌面应用"
+                    "message": "Zotero is not running, please start the Zotero desktop app"
                 }
             
             # 🎯 关键扩展：使用提取器管理器增强元数据
@@ -643,10 +643,10 @@ class ZoteroConnector:
                 logger.warning(f"⚠️ 元数据增强失败: {enhanced_paper_info['error']}")
                 enhanced_paper_info = paper_info
 
-            # 构建Zotero项目数据
+            # Build Zotero item data
             zotero_item = self._convert_to_zotero_format(enhanced_paper_info)
             
-            # 保存到Zotero
+            # Save to Zotero
             result = self._save_via_connector(zotero_item, pdf_path, collection_key)
             
             # 添加扩展信息到结果
@@ -667,23 +667,23 @@ class ZoteroConnector:
                 logger.info(f"✅ PDF链接已添加到条目信息中: {pdf_url}")
             
             if result["success"]:
-                logger.info(f"成功保存到Zotero: {enhanced_paper_info.get('title', '未知标题')}")
-                # 🎯 关键修复：在返回结果中添加正确的标题信息
+                logger.info(f"成功Save to Zotero: {enhanced_paper_info.get('title', 'Unknown Title')}")
+                # FIX: Add correct title info to return result
                 result["title"] = enhanced_paper_info.get('title', '')
                 result["paper_info"] = enhanced_paper_info
             
             return result
             
         except Exception as e:
-            logger.error(f"保存到Zotero失败: {e}")
+            logger.error(f"Save to Zotero失败: {e}")
             return {
                 "success": False,
-                "message": f"保存到Zotero失败: {e}"
+                "message": f"Save to Zotero失败: {e}"
             }
     
     def _split_comma_authors(self, authors_str: str) -> list:
         """
-        智能分割逗号分隔的作者
+        Smart split comma-separated authors
         
         支持两种格式：
         1. "First Last, First Last" - 逗号分隔不同作者
@@ -732,9 +732,9 @@ class ZoteroConnector:
         return [authors_str]
     
     def _convert_to_zotero_format(self, paper_info: Dict) -> Dict:
-        """将论文信息转换为Zotero格式"""
+        """Convert paper info to Zotero format"""
         
-        # 解析作者 - 改进的逻辑支持多种格式
+        # Parse authors - improved logic supports multiple formats
         authors = []
         
         # 🔧 修复：优先使用已经格式化的 creators（Zotero格式数组）
@@ -760,7 +760,7 @@ class ZoteroConnector:
             
             for author_name in author_names[:15]:  # 限制作者数量
                 author_name = author_name.strip()
-                if not author_name or author_name == '未知作者':
+                if not author_name or author_name == 'Unknown Author':
                     continue
                 
                 # 解析"姓, 名"格式
@@ -786,9 +786,9 @@ class ZoteroConnector:
                         "lastName": lastName
                     })
         
-        # 解析日期
+        # Parse date
         date = paper_info.get('date', '')
-        if date and date != '未知日期':
+        if date and date != 'Unknown Date':
             # 尝试标准化日期格式
             try:
                 # 处理arxiv和其他常见的日期格式
@@ -813,7 +813,7 @@ class ZoteroConnector:
             except:
                 pass
         
-        # 确定项目类型 
+        # Determine item type 
         item_type = paper_info.get('itemType', 'journalArticle')
         if 'arxiv.org' in paper_info.get('url', ''):
             item_type = 'preprint'  # arxiv论文使用preprint类型
@@ -965,7 +965,7 @@ class ZoteroConnector:
     
     def _download_pdf_content(self, pdf_url: str) -> Optional[bytes]:
         """
-        尝试下载PDF内容
+        尝试Download PDF content
         
         Args:
             pdf_url: PDF链接
@@ -1103,7 +1103,7 @@ class ZoteroConnector:
                             time.sleep(wait_time)
                             continue
                         else:
-                            logger.error(f"❌ PDF下载失败（已重试{max_retries}次）: {e}")
+                            logger.error(f"❌ PDF download failed（已重试{max_retries}次）: {e}")
                             return None
                     
         except Exception as e:
@@ -1111,7 +1111,7 @@ class ZoteroConnector:
             return None
     
     def _get_default_publication_title(self, paper_info: Dict) -> str:
-        """根据论文信息智能确定默认的期刊/会议名称"""
+        """Smart determine default publication title"""
         
         # 优先使用已提取的期刊信息
         if paper_info.get('journal'):
@@ -1171,7 +1171,7 @@ class ZoteroConnector:
     
     def _save_via_connector(self, zotero_item: Dict, pdf_path: Optional[str] = None, 
                            collection_key: Optional[str] = None) -> Dict:
-        """通过Connector API保存项目 - 实用解决方案"""
+        """Save via Connector API - practical solution"""
         try:
             import time
             import json
@@ -1179,7 +1179,7 @@ class ZoteroConnector:
             
             session_id = f"success-test-{int(time.time() * 1000)}"
             
-            # 🎯 按照官方插件方法：生成随机ID
+            # 🎯 Follow official plugin method: generate random ID
             import random
             import string
             
@@ -1236,10 +1236,10 @@ class ZoteroConnector:
             pdf_url = zotero_item.get('pdf_url')
             
             if pdf_url:
-                logger.info(f"🔍 发现PDF链接: {pdf_url}")
-                logger.info("📎 将在保存后手动触发PDF下载")
+                logger.info(f"Found PDF link: {pdf_url}")
+                logger.info("Will manually trigger PDF download after save")
             
-            # 为item生成随机ID
+            # Generate random ID for item
             import random
             import string
             item_id = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(8))
@@ -1255,14 +1255,14 @@ class ZoteroConnector:
                     "snapshot": False
                 })
             
-            # 构建保存payload
+            # Build save payload
             payload = {
                 "sessionID": session_id,
                 "uri": zotero_item.get("url", ""),
                 "items": [clean_item]
             }
             
-            # 设置目标集合
+            # Set target collection
             if collection_key:
                 tree_view_id = self._get_collection_tree_view_id(collection_key)
                 if tree_view_id:
@@ -1271,7 +1271,7 @@ class ZoteroConnector:
             
             # headers和session已经在上面定义了
             
-            # 保存项目
+            # Save item
             response = session.post(f"{self.base_url}/connector/saveItems", json=payload, timeout=30)
             
             if response.status_code not in [200, 201]:
@@ -1280,21 +1280,21 @@ class ZoteroConnector:
                     "message": f"保存失败，状态码: {response.status_code}"
                 }
             
-            logger.info("✅ 项目保存成功")
+            logger.info("Item saved successfully")
             
-            # 🎯 正确的附件处理：调用saveAttachment API保存PDF
+            # CORRECT: Use saveAttachment API for PDF
             pdf_attachment_success = False
             
             if pdf_url:
-                logger.info(f"🔍 发现PDF链接: {pdf_url}")
+                logger.info(f"Found PDF link: {pdf_url}")
                 
                 # 🚀 关键修复：优先使用浏览器预下载的PDF内容
                 try:
                     if zotero_item.get('pdf_content'):
-                        logger.info("✅ 使用浏览器预下载的PDF内容，跳过HTTP下载")
+                        logger.info("Using browser-pre-downloaded PDF content, skipping HTTP")
                         pdf_content = zotero_item['pdf_content']
                     else:
-                        logger.info("📥 开始下载PDF内容...")
+                        logger.info("📥 开始Download PDF content...")
                         pdf_content = self._download_pdf_content(pdf_url)
                     
                     if pdf_content:
@@ -1445,10 +1445,10 @@ class ZoteroConnector:
             
             # 验证文件是否下载成功且是PDF
             if pdf_path.exists() and pdf_path.stat().st_size > 1024:  # 至少1KB
-                logger.info(f"PDF下载成功: {pdf_path}")
+                logger.info(f"PDF download successful: {pdf_path}")
                 return str(pdf_path)
             else:
-                logger.warning("PDF下载失败或文件太小")
+                logger.warning("PDF download failed或文件太小")
                 return None
                 
         except Exception as e:
@@ -1521,7 +1521,7 @@ class ZoteroConnector:
             if not self.is_running():
                 return {
                     "success": False,
-                    "message": "Zotero未运行，请启动Zotero桌面应用"
+                    "message": "Zotero is not running, please start the Zotero desktop app"
                 }
             
             collection_data = {
@@ -1672,7 +1672,7 @@ class ZoteroConnector:
         return databases
     
     def test_database_access(self, database_name: str) -> Dict:
-        """测试数据库访问状态"""
+        """Test database access状态"""
         if database_name.lower() == 'arxiv':
             return {
                 'database': 'arXiv',
@@ -2010,7 +2010,7 @@ class ZoteroConnector:
             error_summary = "; ".join(pdf_errors) if pdf_errors else "未知错误"
             return {
                 "status": "failed",
-                "message": "PDF下载失败", 
+                "message": "PDF download failed", 
                 "success": False,
                 "details": error_summary,
                 "suggestion": self._get_pdf_error_suggestion(pdf_errors)
@@ -2043,14 +2043,14 @@ class ZoteroConnector:
         Returns:
             str: 用户消息
         """
-        base_msg = "✅ 论文基本信息已保存到Zotero"
+        base_msg = "✅ 论文基本信息已Save to Zotero"
         
         if pdf_status.get("success", False):
             base_msg += "\n✅ PDF附件下载并保存成功"
         elif pdf_status.get("status") == "none":
             base_msg += "\nℹ️ 未发现可下载的PDF链接"
         else:
-            base_msg += f"\n⚠️ PDF下载失败: {pdf_status.get('details', '未知原因')}"
+            base_msg += f"\n⚠️ PDF download failed: {pdf_status.get('details', '未知原因')}"
             if pdf_status.get("suggestion"):
                 base_msg += f"\n💡 建议: {pdf_status['suggestion']}"
         
@@ -2304,19 +2304,19 @@ class ZoteroConnector:
             
             db_name = config['databases'][database_key].get('name', database_key)
             if success:
-                logger.info(f"✅ 更新 {db_name} cookies成功：{cookie_count}个cookies")
+                logger.info(f"Updated cookies successfully：{cookie_count}个cookies")
             else:
                 logger.error(f"❌ 设置 {db_name} cookies失败")
                 
             return success
             
         except Exception as e:
-            logger.error(f"❌ 更新数据库cookies失败：{e}")
+            logger.error(f"Failed to update cookies：{e}")
             return False
     
     def get_databases_status(self) -> Dict[str, Dict]:
         """
-        获取所有数据库的状态信息
+        Get status info for all databases
         
         Returns:
             Dict[str, Dict]: 数据库状态信息
@@ -2369,32 +2369,757 @@ class ZoteroConnector:
             return status_info
             
         except Exception as e:
-            logger.error(f"❌ 读取数据库状态失败：{e}")
+            logger.error(f"Failed to read database status: {e}")
             return {}
+
+    def get_library_items(self, limit: int = 50, offset: int = 0) -> Dict:
+        """
+        Get items from the Zotero library.
+
+        Args:
+            limit: Maximum number of items to return
+            offset: Offset for pagination
+
+        Returns:
+            Dict containing items and metadata
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            items = self._get_items_from_database(limit, offset)
+            return {"success": True, "items": items}
+
+        except Exception as e:
+            logger.error(f"Failed to get library items: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _get_items_from_database(self, limit: int = 50, offset: int = 0) -> List[Dict]:
+        """Get items directly from the Zotero SQLite database"""
+        items = []
+        
+        db_path = self._get_zotero_db_path()
+        if not db_path or not db_path.exists():
+            return items
+        
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT i.itemID, i.key, i.itemTypeID, i.dateAdded, i.dateModified,
+                       t.typeName
+                FROM items i
+                JOIN itemTypes t ON i.itemTypeID = t.itemTypeID
+                WHERE i.libraryID = 1
+                ORDER BY i.dateAdded DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            for row in cursor:
+                item = {
+                    "itemKey": row["key"],
+                    "itemID": row["itemID"],
+                    "itemType": row["typeName"],
+                    "dateAdded": row["dateAdded"],
+                    "dateModified": row["dateModified"]
+                }
+                
+                # Get title
+                cursor.execute("""
+                    SELECT v.value FROM itemData d
+                    JOIN fields f ON d.fieldID = f.fieldID
+                    JOIN itemDataValues v ON d.valueID = v.valueID
+                    WHERE d.itemID = ? AND f.fieldName = 'title'
+                """, (row["itemID"],))
+                title_row = cursor.fetchone()
+                if title_row:
+                    item["title"] = title_row["value"]
+                else:
+                    item["title"] = "Untitled"
+                
+                items.append(item)
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database query failed: {e}")
+        
+        return items
+
+    def search_items(self, query: str) -> Dict:
+        """
+        Search for items in the Zotero library.
+
+        Args:
+            query: Search query string
+
+        Returns:
+            Dict containing matching items
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            items = self._search_items_in_database(query)
+            return {"success": True, "items": items}
+
+        except Exception as e:
+            logger.error(f"Failed to search items: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _search_items_in_database(self, query: str) -> List[Dict]:
+        """Search items in the Zotero SQLite database"""
+        items = []
+        
+        db_path = self._get_zotero_db_path()
+        if not db_path or not db_path.exists():
+            return items
+        
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT DISTINCT i.itemID, i.key, i.itemTypeID, i.dateAdded, i.dateModified,
+                       t.typeName
+                FROM items i
+                JOIN itemTypes t ON i.itemTypeID = t.itemTypeID
+                JOIN itemData d ON i.itemID = d.itemID
+                JOIN itemDataValues v ON d.valueID = v.valueID
+                JOIN fields f ON d.fieldID = f.fieldID
+                WHERE i.libraryID = 1
+                  AND (f.fieldName = 'title' AND v.value LIKE ?)
+                ORDER BY i.dateAdded DESC
+                LIMIT 50
+            """, (f"%{query}%",))
+            
+            for row in cursor:
+                item = {
+                    "itemKey": row["key"],
+                    "itemID": row["itemID"],
+                    "itemType": row["typeName"],
+                    "dateAdded": row["dateAdded"],
+                    "dateModified": row["dateModified"]
+                }
+                
+                cursor.execute("""
+                    SELECT v.value FROM itemData d
+                    JOIN fields f ON d.fieldID = f.fieldID
+                    JOIN itemDataValues v ON d.valueID = v.valueID
+                    WHERE d.itemID = ? AND f.fieldName = 'title'
+                """, (row["itemID"],))
+                title_row = cursor.fetchone()
+                if title_row:
+                    item["title"] = title_row["value"]
+                else:
+                    item["title"] = "Untitled"
+                
+                items.append(item)
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database search failed: {e}")
+        
+        return items
+
+    def get_item(self, item_key: str) -> Dict:
+        """
+        Get a specific item by its key.
+
+        Args:
+            item_key: The Zotero item key
+
+        Returns:
+            Dict containing item data
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            item = self._get_item_from_database(item_key)
+            if item:
+                return {"success": True, "item": item}
+            else:
+                return {"success": False, "error": "Item not found"}
+
+        except Exception as e:
+            logger.error(f"Failed to get item: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _get_item_from_database(self, item_key: str) -> Optional[Dict]:
+        """Get a single item from the Zotero SQLite database"""
+        db_path = self._get_zotero_db_path()
+        if not db_path or not db_path.exists():
+            return None
+        
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT i.itemID, i.key, i.itemTypeID, i.dateAdded, i.dateModified,
+                       t.typeName
+                FROM items i
+                JOIN itemTypes t ON i.itemTypeID = t.itemTypeID
+                WHERE i.key = ? AND i.libraryID = 1
+            """, (item_key,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            item = {
+                "itemKey": row["key"],
+                "itemID": row["itemID"],
+                "itemType": row["typeName"],
+                "dateAdded": row["dateAdded"],
+                "dateModified": row["dateModified"]
+            }
+            
+            # Get all item data fields
+            cursor.execute("""
+                SELECT f.fieldName, v.value FROM itemData d
+                JOIN fields f ON d.fieldID = f.fieldID
+                JOIN itemDataValues v ON d.valueID = v.valueID
+                WHERE d.itemID = ?
+            """, (row["itemID"],))
+            
+            for field_row in cursor:
+                item[field_row["fieldName"]] = field_row["value"]
+            
+            # Get creators
+            cursor.execute("""
+                SELECT c.firstName, c.lastName, ct.creatorType
+                FROM creators c
+                JOIN itemCreators ic ON c.creatorID = ic.creatorID
+                JOIN creatorTypes ct ON ic.creatorTypeID = ct.creatorTypeID
+                WHERE ic.itemID = ?
+            """, (row["itemID"],))
+            
+            creators = []
+            for creator_row in cursor:
+                creators.append({
+                    "firstName": creator_row["firstName"] or "",
+                    "lastName": creator_row["lastName"] or "",
+                    "creatorType": creator_row["creatorType"]
+                })
+            item["creators"] = creators
+            
+            conn.close()
+            return item
+            
+        except Exception as e:
+            logger.error(f"Database query failed: {e}")
+            return None
+
+    def _get_zotero_db_path(self) -> Optional[Path]:
+        """Get the Zotero database path"""
+        return self._zotero_db_path
+
+    def update_item(self, item_key: str, updates: Dict) -> Dict:
+        """
+        Update an existing Zotero item's metadata.
+
+        Args:
+            item_key: The Zotero item key to update
+            updates: Dictionary of fields to update (title, abstract, date, etc.)
+
+        Returns:
+            Dict containing the update result
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            db_path = self._get_zotero_db_path()
+            if not db_path or not db_path.exists():
+                return {"success": False, "error": "Zotero database not found"}
+
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            # Get item ID
+            cursor.execute("SELECT itemID FROM items WHERE key = ? AND libraryID = 1", (item_key,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return {"success": False, "error": "Item not found"}
+
+            item_id = row[0]
+
+            # Map field names to field IDs
+            field_name_to_id = {
+                "title": "title",
+                "abstractNote": "abstractNote",
+                "date": "date",
+                "url": "url",
+                "publicationTitle": "publicationTitle",
+                "DOI": "DOI",
+            }
+
+            updated_fields = []
+            for field_name, field_value in updates.items():
+                if field_name in field_name_to_id:
+                    db_field_name = field_name_to_id[field_name]
+                    
+                    # Get field ID
+                    cursor.execute("SELECT fieldID FROM fields WHERE fieldName = ?", (db_field_name,))
+                    field_row = cursor.fetchone()
+                    if not field_row:
+                        continue
+                    field_id = field_row[0]
+                    
+                    # Check if value exists, if not add it
+                    cursor.execute("SELECT valueID FROM itemData WHERE itemID = ? AND fieldID = ?", (item_id, field_id))
+                    value_row = cursor.fetchone()
+                    
+                    if value_row:
+                        # Update existing value
+                        cursor.execute("""
+                            UPDATE itemDataValues SET value = ? 
+                            WHERE valueID = (SELECT valueID FROM itemData WHERE itemID = ? AND fieldID = ?)
+                        """, (field_value, item_id, field_id))
+                    else:
+                        # Get max valueID
+                        cursor.execute("SELECT MAX(valueID) FROM itemDataValues")
+                        max_value_id = cursor.fetchone()[0] or 0
+                        
+                        # Insert new value
+                        cursor.execute("INSERT INTO itemDataValues (valueID, value) VALUES (?, ?)", 
+                                       (max_value_id + 1, field_value))
+                        
+                        # Insert item data reference
+                        cursor.execute("INSERT INTO itemData (itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                                       (item_id, field_id, max_value_id + 1))
+                    
+                    updated_fields.append(field_name)
+
+            conn.commit()
+            conn.close()
+
+            if updated_fields:
+                logger.info(f"Successfully updated item {item_key}: {updated_fields}")
+                return {"success": True, "message": f"Item updated: {', '.join(updated_fields)}", "item_key": item_key}
+            else:
+                return {"success": False, "error": "No fields were updated"}
+
+        except Exception as e:
+            logger.error(f"Failed to update item: {e}")
+            return {"success": False, "error": str(e)}
+
+    def update_item_tags(self, item_key: str, tags: List[str]) -> Dict:
+        """
+        Update the tags on an existing item.
+
+        Args:
+            item_key: The Zotero item key
+            tags: List of tag strings to set
+
+        Returns:
+            Dict containing the update result
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            db_path = self._get_zotero_db_path()
+            if not db_path or not db_path.exists():
+                return {"success": False, "error": "Zotero database not found"}
+
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            # Get item ID
+            cursor.execute("SELECT itemID FROM items WHERE key = ? AND libraryID = 1", (item_key,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return {"success": False, "error": "Item not found"}
+
+            item_id = row[0]
+
+            # Delete existing tags
+            cursor.execute("DELETE FROM itemTags WHERE itemID = ?", (item_id,))
+
+            # Add new tags
+            for tag in tags:
+                # Get or create tag
+                cursor.execute("SELECT tagID FROM tags WHERE name = ?", (tag,))
+                tag_row = cursor.fetchone()
+                
+                if tag_row:
+                    tag_id = tag_row[0]
+                else:
+                    cursor.execute("SELECT MAX(tagID) FROM tags")
+                    max_tag_id = cursor.fetchone()[0] or 0
+                    cursor.execute("INSERT INTO tags (tagID, name) VALUES (?, ?)", (max_tag_id + 1, tag))
+                    tag_id = max_tag_id + 1
+                
+                # Link tag to item (type=0 for manual tags)
+                cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (?, ?, 0)", (item_id, tag_id))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"Successfully updated tags for item: {item_key}")
+            return {"success": True, "message": f"Tags updated: {', '.join(tags)}", "item_key": item_key, "tags": tags}
+
+        except Exception as e:
+            logger.error(f"Failed to update item tags: {e}")
+            return {"success": False, "error": str(e)}
+
+    def delete_item(self, item_key: str) -> Dict:
+        """
+        Delete an item from the Zotero library.
+
+        Args:
+            item_key: The Zotero item key to delete
+
+        Returns:
+            Dict containing the deletion result
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            db_path = self._get_zotero_db_path()
+            if not db_path or not db_path.exists():
+                return {"success": False, "error": "Zotero database not found"}
+
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            # Get item ID
+            cursor.execute("SELECT itemID FROM items WHERE key = ? AND libraryID = 1", (item_key,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return {"success": False, "error": "Item not found"}
+
+            item_id = row[0]
+
+            # Delete in correct order (respect foreign keys)
+            cursor.execute("DELETE FROM itemTags WHERE itemID = ?", (item_id,))
+            cursor.execute("DELETE FROM itemCreators WHERE itemID = ?", (item_id,))
+            cursor.execute("DELETE FROM itemData WHERE itemID = ?", (item_id,))
+            cursor.execute("DELETE FROM items WHERE itemID = ?", (item_id,))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"Successfully deleted item: {item_key}")
+            return {"success": True, "message": "Item deleted successfully", "item_key": item_key}
+
+        except Exception as e:
+            logger.error(f"Failed to delete item: {e}")
+            return {"success": False, "error": str(e)}
+
+    def move_item_to_collection(self, item_key: str, collection_key: str) -> Dict:
+        """
+        Move an item to a different collection.
+
+        Args:
+            item_key: The Zotero item key
+            collection_key: The target collection key
+
+        Returns:
+            Dict containing the move result
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            db_path = self._get_zotero_db_path()
+            if not db_path or not db_path.exists():
+                return {"success": False, "error": "Zotero database not found"}
+
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            # Get item ID
+            cursor.execute("SELECT itemID FROM items WHERE key = ? AND libraryID = 1", (item_key,))
+            item_row = cursor.fetchone()
+            if not item_row:
+                conn.close()
+                return {"success": False, "error": "Item not found"}
+
+            item_id = item_row[0]
+
+            # Get collection ID
+            cursor.execute("SELECT collectionID FROM collections WHERE libraryID = 1 AND collectionKey = ?", (collection_key,))
+            coll_row = cursor.fetchone()
+            if not coll_row:
+                conn.close()
+                return {"success": False, "error": "Collection not found"}
+
+            collection_id = coll_row[0]
+
+            # Check if item is already in collection
+            cursor.execute("SELECT * FROM collectionItems WHERE collectionID = ? AND itemID = ?", (collection_id, item_id))
+            if cursor.fetchone():
+                conn.close()
+                return {"success": True, "message": "Item already in collection", "item_key": item_key}
+
+            # Add item to collection
+            cursor.execute("INSERT INTO collectionItems (collectionID, itemID) VALUES (?, ?)", (collection_id, item_id))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"Successfully moved item {item_key} to collection {collection_key}")
+            return {"success": True, "message": "Item moved successfully", "item_key": item_key}
+
+        except Exception as e:
+            logger.error(f"Failed to move item: {e}")
+            return {"success": False, "error": str(e)}
+
+    def validate_item_with_arxiv(self, item_key: str) -> Dict:
+        """
+        Validate a Zotero item against arXiv API data.
+
+        If the item has a DOI, queries arXiv API and compares metadata
+        with the current Zotero entry, displaying any differences.
+
+        Args:
+            item_key: The Zotero item key to validate
+
+        Returns:
+            Dict containing validation results and differences
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            result = self.get_item(item_key)
+            if not result.get("success"):
+                return {"success": False, "error": f"Could not get item: {result.get('error')}"}
+
+            item_data = result.get("item", {})
+            if isinstance(item_data, str):
+                try:
+                    item_data = json.loads(item_data)
+                except json.JSONDecodeError:
+                    pass
+
+            zotero_metadata = {
+                "title": item_data.get("title", ""),
+                "abstract": item_data.get("abstractNote", ""),
+                "date": item_data.get("date", ""),
+                "url": item_data.get("url", ""),
+                "doi": item_data.get("DOI", ""),
+                "creators": item_data.get("creators", []),
+                "item_type": item_data.get("itemType", ""),
+            }
+
+            doi = zotero_metadata.get("doi", "")
+            if not doi:
+                return {
+                    "success": False,
+                    "error": "No DOI found in this item",
+                    "item_key": item_key,
+                    "zotero_metadata": zotero_metadata,
+                    "has_doi": False
+                }
+
+            arxiv_url = self._get_arxiv_url_from_doi(doi)
+            if not arxiv_url:
+                return {
+                    "success": False,
+                    "error": "Could not find arXiv URL from DOI",
+                    "item_key": item_key,
+                    "doi": doi
+                }
+
+            from .extractors.arxiv_extractor import ArxivAPIExtractor
+            arxiv_extractor = ArxivAPIExtractor()
+            arxiv_metadata = arxiv_extractor.extract_metadata(arxiv_url)
+
+            if "error" in arxiv_metadata:
+                return {
+                    "success": False,
+                    "error": f"arXiv API query failed: {arxiv_metadata['error']}",
+                    "item_key": item_key,
+                    "doi": doi,
+                    "arxiv_url": arxiv_url
+                }
+
+            differences = self._compare_metadata(zotero_metadata, arxiv_metadata)
+
+            return {
+                "success": True,
+                "item_key": item_key,
+                "doi": doi,
+                "arxiv_url": arxiv_url,
+                "zotero_metadata": zotero_metadata,
+                "arxiv_metadata": arxiv_metadata,
+                "differences": differences,
+                "is_match": len(differences) == 0
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to validate item: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _get_arxiv_url_from_doi(self, doi: str) -> Optional[str]:
+        """Extract arXiv URL from DOI if it points to arXiv"""
+        if not doi:
+            return None
+
+        doi_lower = doi.lower()
+
+        if "arxiv.org" in doi_lower:
+            arxiv_id_match = re.search(r'(\d+\.\d+)', doi)
+            if arxiv_id_match:
+                return f"https://arxiv.org/abs/{arxiv_id_match.group(1)}"
+
+        if "10.48550/arxiv" in doi_lower or "arxiv." in doi_lower:
+            arxiv_id_match = re.search(r'arxiv[\.:]*(\d+\.\d+)', doi, re.IGNORECASE)
+            if arxiv_id_match:
+                return f"https://arxiv.org/abs/{arxiv_id_match.group(1)}"
+
+        return None
+
+    def _compare_metadata(self, zotero: Dict, arxiv: Dict) -> Dict[str, List[Dict]]:
+        """Compare Zotero metadata with arXiv metadata and find differences"""
+        differences = {}
+
+        title_zotero = (zotero.get("title") or "").strip()
+        title_arxiv = (arxiv.get("title") or "").strip()
+        if title_zotero.lower() != title_arxiv.lower():
+            differences["title"] = [
+                {"source": "Zotero", "value": title_zotero},
+                {"source": "arXiv", "value": title_arxiv}
+            ]
+
+        abstract_zotero = self._normalize_abstract(zotero.get("abstract", ""))
+        abstract_arxiv = self._normalize_abstract(arxiv.get("abstract", ""))
+        if abstract_zotero != abstract_arxiv:
+            differences["abstract"] = [
+                {"source": "Zotero", "value": abstract_zotero[:200] + "..." if len(abstract_zotero) > 200 else abstract_zotero},
+                {"source": "arXiv", "value": abstract_arxiv[:200] + "..." if len(abstract_arxiv) > 200 else abstract_arxiv}
+            ]
+
+        date_zotero = self._normalize_date(zotero.get("date", ""))
+        date_arxiv = self._normalize_date(arxiv.get("date", ""))
+        if date_zotero and date_arxiv and date_zotero != date_arxiv:
+            differences["date"] = [
+                {"source": "Zotero", "value": date_zotero},
+                {"source": "arXiv", "value": date_arxiv}
+            ]
+
+        zotero_authors = self._extract_last_names(zotero.get("creators", []))
+        arxiv_authors = [a.get("lastName", "") for a in arxiv.get("authors", [])]
+        if zotero_authors and arxiv_authors and set(zotero_authors) != set(arxiv_authors):
+            differences["authors"] = [
+                {"source": "Zotero", "value": ", ".join(zotero_authors)},
+                {"source": "arXiv", "value": ", ".join(arxiv_authors)}
+            ]
+
+        doi_zotero = (zotero.get("doi") or "").strip()
+        doi_arxiv = (arxiv.get("doi") or "").strip()
+        if doi_zotero and doi_arxiv and doi_zotero != doi_arxiv:
+            differences["doi"] = [
+                {"source": "Zotero", "value": doi_zotero},
+                {"source": "arXiv", "value": doi_arxiv}
+            ]
+
+        return differences
+
+    def _normalize_abstract(self, abstract: str) -> str:
+        """Normalize abstract for comparison"""
+        if not abstract:
+            return ""
+        normalized = re.sub(r'\s+', ' ', abstract.strip())
+        return normalized
+
+    def _normalize_date(self, date: str) -> str:
+        """Normalize date for comparison"""
+        if not date:
+            return ""
+        date = date.strip()
+        if len(date) >= 10:
+            return date[:10]
+        return date
+
+    def _extract_last_names(self, creators: List[Dict]) -> List[str]:
+        """Extract last names from Zotero creators"""
+        last_names = []
+        for creator in creators:
+            if creator.get("creatorType") in ["author", "coauthor"]:
+                last_name = creator.get("lastName", "").strip()
+                if last_name:
+                    last_names.append(last_name)
+        return last_names
+
+    def validate_and_update_item(self, item_key: str, apply_updates: bool = False) -> Dict:
+        """
+        Validate a Zotero item against arXiv and optionally update it.
+
+        Args:
+            item_key: The Zotero item key
+            apply_updates: If True, update Zotero with arXiv data
+
+        Returns:
+            Dict containing validation results and any updates applied
+        """
+        validation = self.validate_item_with_arxiv(item_key)
+
+        if not validation.get("success"):
+            return validation
+
+        differences = validation.get("differences", {})
+
+        if not differences:
+            return {
+                "success": True,
+                "message": "Item metadata matches arXiv perfectly",
+                "item_key": item_key,
+                "is_match": True
+            }
+
+        if apply_updates:
+            updates = {}
+            if "title" in differences:
+                updates["title"] = validation["arxiv_metadata"].get("title", "")
+
+            if "abstract" in differences:
+                updates["abstractNote"] = validation["arxiv_metadata"].get("abstract", "")
+
+            if "date" in differences:
+                updates["date"] = validation["arxiv_metadata"].get("date", "")
+
+            if updates:
+                update_result = self.update_item(item_key, updates)
+                validation["update_result"] = update_result
+                validation["updates_applied"] = updates
+                validation["message"] = f"Applied {len(updates)} updates from arXiv"
+
+        return validation
 
 
 def test_zotero_connection():
-    """测试Zotero连接"""
-    print("🧪 测试Zotero连接...")
-    
+    """Test Zotero connection"""
+    print("Testing Zotero connection...")
+
     connector = ZoteroConnector()
-    
+
     if connector.is_running():
         version = connector.get_version()
         if version:
-            print(f"✅ Zotero连接成功，版本: {version}")
-            
-            # 测试集合获取
-            collections = connector.get_zotero_collections()
-            print(f"📚 找到 {len(collections.get('collections', []))} 个集合")
+            print(f"Zotero connection successful, version: {version}")
+
+            collections = connector.get_collections()
+            print(f"Found {len(collections)} collections")
         else:
-            print("⚠️ Zotero连接成功，但无法获取版本信息")
+            print("Zotero connection successful, but could not get version info")
     else:
-        print("❌ Zotero未运行或连接失败")
+        print("Zotero is not running or connection failed")
 
-
-# 在ZoteroConnector类中添加新方法（这里是文件末尾，需要找到类的正确位置）
-# 注意：这些方法应该添加到ZoteroConnector类内部
 
 if __name__ == "__main__":
-    test_zotero_connection() 
+    test_zotero_connection()
