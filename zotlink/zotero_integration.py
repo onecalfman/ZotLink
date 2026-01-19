@@ -2417,13 +2417,14 @@ class ZoteroConnector:
             logger.error(f"Failed to read database status: {e}")
             return {}
 
-    def get_library_items(self, limit: int = 50, offset: int = 0) -> Dict:
+    def get_library_items(self, limit: int = 50, offset: int = 0, include_details: bool = False) -> Dict:
         """
         Get items from the Zotero library.
 
         Args:
             limit: Maximum number of items to return
             offset: Offset for pagination
+            include_details: Whether to include attachments, notes, and tags count
 
         Returns:
             Dict containing items and metadata
@@ -2432,20 +2433,73 @@ class ZoteroConnector:
             if not self.is_running():
                 return {"success": False, "error": "Zotero is not running"}
 
-            items = self._get_items_from_database(limit, offset)
+            items = self._get_items_from_database(limit, offset, include_details)
             return {"success": True, "items": items}
 
         except Exception as e:
             logger.error(f"Failed to get library items: {e}")
             return {"success": False, "error": str(e)}
 
-    def _get_items_from_database(self, limit: int = 50, offset: int = 0) -> List[Dict]:
+    def _get_items_from_database(self, limit: int = 50, offset: int = 0, include_details: bool = False) -> List[Dict]:
         """Get items directly from the Zotero SQLite database"""
         items = []
         
         db_path = self._get_zotero_db_path()
         if not db_path or not db_path.exists():
             return items
+        
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT i.itemID, i.key, i.itemTypeID, i.dateAdded, i.dateModified,
+                       t.typeName
+                FROM items i
+                JOIN itemTypes t ON i.itemTypeID = t.itemTypeID
+                WHERE i.libraryID = 1 AND i.itemTypeID NOT IN (2, 14)
+                ORDER BY i.dateAdded DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            for row in cursor:
+                item = {
+                    "itemKey": row["key"],
+                    "itemID": row["itemID"],
+                    "itemType": row["typeName"],
+                    "dateAdded": row["dateAdded"],
+                    "dateModified": row["dateModified"]
+                }
+                
+                title_cursor = conn.cursor()
+                title_cursor.execute("""
+                    SELECT v.value FROM itemData d
+                    JOIN fields f ON d.fieldID = f.fieldID
+                    JOIN itemDataValues v ON d.valueID = v.valueID
+                    WHERE d.itemID = ? AND f.fieldName = 'title'
+                """, (row["itemID"],))
+                title_row = title_cursor.fetchone()
+                if title_row:
+                    item["title"] = title_row["value"]
+                else:
+                    item["title"] = "Untitled"
+                
+                if include_details:
+                    item["attachment_count"] = len(self._get_item_attachments(row["itemID"]))
+                    item["note_count"] = len(self._get_item_notes(row["itemID"]))
+                    raw_tags = self._get_item_tags(row["itemID"])
+                    item["tag_count"] = len(raw_tags)
+                    item["tags"] = [t["name"] for t in raw_tags[:5]]
+                
+                items.append(item)
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database query failed: {e}")
+        
+        return items
         
         try:
             conn = sqlite3.connect(str(db_path))
@@ -2571,12 +2625,13 @@ class ZoteroConnector:
         
         return items
 
-    def get_item(self, item_key: str) -> Dict:
+    def get_item(self, item_key: str, include_attachments: bool = True) -> Dict:
         """
         Get a specific item by its key.
 
         Args:
             item_key: The Zotero item key
+            include_attachments: Whether to include attachments, notes, and tags (default: True)
 
         Returns:
             Dict containing item data
@@ -2586,10 +2641,18 @@ class ZoteroConnector:
                 return {"success": False, "error": "Zotero is not running"}
 
             item = self._get_item_from_database(item_key)
-            if item:
-                return {"success": True, "item": item}
-            else:
+            if not item:
                 return {"success": False, "error": "Item not found"}
+
+            if include_attachments:
+                item_id = item.get("itemID")
+                item["attachments"] = self._get_item_attachments(item_id)
+                item["notes"] = self._get_item_notes(item_id)
+                raw_tags = self._get_item_tags(item_id)
+                item["tags"] = [t["name"] for t in raw_tags]
+                item["tags_detail"] = raw_tags
+
+            return {"success": True, "item": item}
 
         except Exception as e:
             logger.error(f"Failed to get item: {e}")
@@ -3145,6 +3208,243 @@ class ZoteroConnector:
                 validation["message"] = f"Applied {len(updates)} updates from arXiv"
 
         return validation
+
+    def _get_item_attachments(self, item_id: int) -> List[Dict]:
+        """Get attachments for an item from the database"""
+        attachments = []
+        db_path = self._get_zotero_db_path()
+        if not db_path or not db_path.exists():
+            return attachments
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT a.itemID, a.path, a.filename, a.contentType, a.storagePath,
+                       i.key, i.itemType
+                FROM attachments a
+                JOIN items i ON a.itemID = i.itemID
+                WHERE a.parentItemID = ?
+            """, (item_id,))
+
+            for row in cursor:
+                attachments.append({
+                    "attachmentItemID": row["itemID"],
+                    "key": row["key"],
+                    "filename": row["filename"],
+                    "contentType": row["contentType"],
+                    "path": row["path"],
+                    "storagePath": row["storagePath"]
+                })
+
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to get attachments: {e}")
+
+        return attachments
+
+    def _get_item_notes(self, item_id: int) -> List[Dict]:
+        """Get notes for an item from the database"""
+        notes = []
+        db_path = self._get_zotero_db_path()
+        if not db_path or not db_path.exists():
+            return notes
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT n.itemID, n.note, i.key
+                FROM notes n
+                JOIN items i ON n.itemID = i.itemID
+                WHERE n.parentItemID = ?
+            """, (item_id,))
+
+            for row in cursor:
+                notes.append({
+                    "noteItemID": row["itemID"],
+                    "key": row["key"],
+                    "note": row["note"]
+                })
+
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to get notes: {e}")
+
+        return notes
+
+    def _get_item_tags(self, item_id: int) -> List[Dict]:
+        """Get tags for an item from the database"""
+        tags = []
+        db_path = self._get_zotero_db_path()
+        if not db_path or not db_path.exists():
+            return tags
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT t.tagID, t.name, it.type
+                FROM tags t
+                JOIN itemTags it ON t.tagID = it.tagID
+                WHERE it.itemID = ?
+            """, (item_id,))
+
+            for row in cursor:
+                tags.append({
+                    "tagID": row["tagID"],
+                    "name": row["name"],
+                    "type": row["type"]
+                })
+
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to get tags: {e}")
+
+        return tags
+
+    def _find_attachment_storage_path(self, attachment_key: str) -> Optional[Path]:
+        """Find the actual storage path for an attachment"""
+        storage_dir = self._zotero_storage_dir
+        if not storage_dir or not storage_dir.exists():
+            return None
+
+        try:
+            for item_folder in storage_dir.iterdir():
+                if item_folder.is_dir():
+                    attachment_path = item_folder / f"{attachment_key}.pdf"
+                    if attachment_path.exists():
+                        return attachment_path
+                    attachment_path = item_folder / f"{attachment_key}"
+                    if attachment_path.exists():
+                        return attachment_path
+        except Exception as e:
+            logger.error(f"Failed to find attachment storage path: {e}")
+
+        return None
+
+    def get_item_pdf_content(self, item_key: str) -> Dict:
+        """
+        Get the PDF content of an item's attachment for text extraction.
+
+        Args:
+            item_key: The Zotero item key
+
+        Returns:
+            Dict containing PDF content or path info
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            db_path = self._get_zotero_db_path()
+            if not db_path or not db_path.exists():
+                return {"success": False, "error": "Zotero database not found"}
+
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT itemID FROM items WHERE key = ? AND libraryID = 1", (item_key,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return {"success": False, "error": "Item not found"}
+
+            item_id = row[0]
+
+            cursor.execute("""
+                SELECT a.itemID, i.key, a.path, a.filename
+                FROM attachments a
+                JOIN items i ON a.itemID = i.itemID
+                WHERE a.parentItemID = ? AND a.contentType = 'application/pdf'
+                LIMIT 1
+            """, (item_id,))
+
+            attachment_row = cursor.fetchone()
+            conn.close()
+
+            if not attachment_row:
+                return {"success": False, "error": "No PDF attachment found", "item_key": item_key}
+
+            attachment_key = attachment_row[1]
+            storage_path = self._find_attachment_storage_path(attachment_key)
+
+            if storage_path and storage_path.exists():
+                try:
+                    from pypdf import PdfReader
+                    reader = PdfReader(str(storage_path))
+                    text_content = []
+                    for page in reader.pages:
+                        text = page.extract_text()
+                        if text:
+                            text_content.append(text)
+                    full_text = "\n\n".join(text_content)
+
+                    return {
+                        "success": True,
+                        "item_key": item_key,
+                        "attachment_key": attachment_key,
+                        "pdf_path": str(storage_path),
+                        "text": full_text,
+                        "page_count": len(reader.pages),
+                        "character_count": len(full_text)
+                    }
+                except Exception as e:
+                    return {"success": False, "error": f"PDF read failed: {e}", "item_key": item_key}
+            else:
+                return {
+                    "success": False,
+                    "error": "PDF file not found in storage",
+                    "item_key": item_key,
+                    "attachment_key": attachment_key,
+                    "suggestion": "The PDF may be stored remotely or not yet synced"
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get item PDF content: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_item_full_data(self, item_key: str, include_attachments: bool = True) -> Dict:
+        """
+        Get full item data including attachments, notes, and tags.
+
+        Args:
+            item_key: The Zotero item key
+            include_attachments: Whether to include attachment metadata
+
+        Returns:
+            Dict containing complete item data
+        """
+        try:
+            if not self.is_running():
+                return {"success": False, "error": "Zotero is not running"}
+
+            item = self._get_item_from_database(item_key)
+            if not item:
+                return {"success": False, "error": "Item not found"}
+
+            item_id = item.get("itemID")
+
+            if include_attachments:
+                item["attachments"] = self._get_item_attachments(item_id)
+
+            item["notes"] = self._get_item_notes(item_id)
+
+            raw_tags = self._get_item_tags(item_id)
+            item["tags"] = [t["name"] for t in raw_tags]
+            item["tags_detail"] = raw_tags
+
+            return {"success": True, "item": item}
+
+        except Exception as e:
+            logger.error(f"Failed to get item full data: {e}")
+            return {"success": False, "error": str(e)}
 
 
 def test_zotero_connection():

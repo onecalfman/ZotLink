@@ -8,6 +8,7 @@ Tests Zotero API connectivity and functionality.
 import pytest
 import sys
 import os
+import sqlite3
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import json
@@ -807,3 +808,566 @@ class TestMCPServerEntryPoints:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestItemAttachmentsNotesTags:
+    """Test cases for item attachments, notes, and tags retrieval"""
+
+    @pytest.fixture
+    def connector(self):
+        """Create a ZoteroConnector instance"""
+        return ZoteroConnector()
+
+    def _create_test_database(self, tmp_path):
+        """Create a test database with full schema including attachments, notes, tags"""
+        db_path = tmp_path / "test_zotero.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS items (
+            itemID INTEGER PRIMARY KEY, key TEXT UNIQUE, itemTypeID INTEGER,
+            itemType TEXT, dateAdded TEXT, dateModified TEXT, libraryID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTypes (
+            itemTypeID INTEGER PRIMARY KEY, typeName TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemData (
+            itemID INTEGER, fieldID INTEGER, valueID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS fields (
+            fieldID INTEGER PRIMARY KEY, fieldName TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemDataValues (
+            valueID INTEGER PRIMARY KEY, value TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS creators (
+            creatorID INTEGER PRIMARY KEY, firstName TEXT, lastName TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemCreators (
+            itemID INTEGER, creatorID INTEGER, creatorTypeID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS creatorTypes (
+            creatorTypeID INTEGER PRIMARY KEY, creatorType TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS attachments (
+            itemID INTEGER PRIMARY KEY, parentItemID INTEGER,
+            path TEXT, filename TEXT, contentType TEXT, storagePath TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS notes (
+            itemID INTEGER PRIMARY KEY, parentItemID INTEGER, note TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS tags (
+            tagID INTEGER PRIMARY KEY, name TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTags (
+            itemID INTEGER, tagID INTEGER, type INTEGER
+        )''')
+        
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (1, 'journalArticle')")
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (2, 'attachment')")
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (14, 'note')")
+        
+        cursor.execute("INSERT INTO fields (fieldID, fieldName) VALUES (1, 'title')")
+        
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded) VALUES (?, 1, 'journalArticle', 1, datetime('now'))",
+                       ("ITEM123",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded) VALUES (?, 2, 'attachment', 1, datetime('now'))",
+                       ("ATTACH456",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded) VALUES (?, 14, 'note', 1, datetime('now'))",
+                       ("NOTE789",))
+        
+        cursor.execute("INSERT INTO itemDataValues (valueID, value) VALUES (1, 'Test Paper Title')")
+        cursor.execute("INSERT INTO itemData (itemID, fieldID, valueID) VALUES (1, 1, 1)")
+        
+        cursor.execute("INSERT INTO attachments (itemID, parentItemID, path, filename, contentType, storagePath) VALUES (?, 1, 'storage/AB123456/file.pdf', 'paper.pdf', 'application/pdf', 'storage/AB123456')",
+                       (2,))
+        
+        cursor.execute("INSERT INTO notes (itemID, parentItemID, note) VALUES (?, 1, 'This is a test note')",
+                       (3,))
+        
+        cursor.execute("INSERT INTO tags (tagID, name) VALUES (1, 'machine-learning')")
+        cursor.execute("INSERT INTO tags (tagID, name) VALUES (2, 'ai')")
+        cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (1, 1, 0)")
+        cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (1, 2, 0)")
+        
+        conn.commit()
+        conn.close()
+        return db_path
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_attachments(self, mock_db_path, connector, tmp_path):
+        """Test _get_item_attachments returns attachment data"""
+        db_path = self._create_test_database(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            attachments = connector._get_item_attachments(1)
+            assert len(attachments) == 1
+            assert attachments[0]["filename"] == "paper.pdf"
+            assert attachments[0]["contentType"] == "application/pdf"
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_notes(self, mock_db_path, connector, tmp_path):
+        """Test _get_item_notes returns note data"""
+        db_path = self._create_test_database(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            notes = connector._get_item_notes(1)
+            assert len(notes) == 1
+            assert "test note" in notes[0]["note"]
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_tags(self, mock_db_path, connector, tmp_path):
+        """Test _get_item_tags returns tag data"""
+        db_path = self._create_test_database(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            tags = connector._get_item_tags(1)
+            assert len(tags) == 2
+            tag_names = [t["name"] for t in tags]
+            assert "machine-learning" in tag_names
+            assert "ai" in tag_names
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_with_attachments(self, mock_db_path, connector, tmp_path):
+        """Test get_item returns attachments when include_attachments=True"""
+        db_path = self._create_test_database(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item("ITEM123", include_attachments=True)
+            assert result["success"] is True
+            item = result["item"]
+            assert "attachments" in item
+            assert len(item["attachments"]) == 1
+            assert item["attachments"][0]["filename"] == "paper.pdf"
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_with_notes(self, mock_db_path, connector, tmp_path):
+        """Test get_item returns notes when include_attachments=True"""
+        db_path = self._create_test_database(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item("ITEM123", include_attachments=True)
+            assert result["success"] is True
+            item = result["item"]
+            assert "notes" in item
+            assert len(item["notes"]) == 1
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_with_tags(self, mock_db_path, connector, tmp_path):
+        """Test get_item returns tags when include_attachments=True"""
+        db_path = self._create_test_database(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item("ITEM123", include_attachments=True)
+            assert result["success"] is True
+            item = result["item"]
+            assert "tags" in item
+            assert "machine-learning" in item["tags"]
+            assert "tags_detail" in item
+            assert len(item["tags_detail"]) == 2
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_without_attachments(self, mock_db_path, connector, tmp_path):
+        """Test get_item skips attachments when include_attachments=False"""
+        db_path = self._create_test_database(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item("ITEM123", include_attachments=False)
+            assert result["success"] is True
+            item = result["item"]
+            assert "attachments" not in item
+            assert "notes" not in item
+            assert "tags" not in item
+
+
+class TestLibraryItemsWithDetails:
+    """Test cases for get_library_items with include_details parameter"""
+
+    @pytest.fixture
+    def connector(self):
+        """Create a ZoteroConnector instance"""
+        return ZoteroConnector()
+
+    def _create_test_database_for_library(self, tmp_path):
+        """Create a test database for library items testing"""
+        db_path = tmp_path / "test_library.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS items (
+            itemID INTEGER PRIMARY KEY, key TEXT UNIQUE, itemTypeID INTEGER,
+            itemType TEXT, dateAdded TEXT, dateModified TEXT, libraryID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTypes (
+            itemTypeID INTEGER PRIMARY KEY, typeName TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemData (
+            itemID INTEGER, fieldID INTEGER, valueID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS fields (
+            fieldID INTEGER PRIMARY KEY, fieldName TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemDataValues (
+            valueID INTEGER PRIMARY KEY, value TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS attachments (
+            itemID INTEGER PRIMARY KEY, parentItemID INTEGER,
+            path TEXT, filename TEXT, contentType TEXT, storagePath TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS notes (
+            itemID INTEGER PRIMARY KEY, parentItemID INTEGER, note TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS tags (
+            tagID INTEGER PRIMARY KEY, name TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTags (
+            itemID INTEGER, tagID INTEGER, type INTEGER
+        )''')
+        
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (1, 'journalArticle')")
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (2, 'attachment')")
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (14, 'note')")
+        cursor.execute("INSERT INTO fields (fieldID, fieldName) VALUES (1, 'title')")
+        
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 1, 'journalArticle', 1, datetime('now'), datetime('now'))",
+                       ("LIBRARY001",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 1, 'journalArticle', 1, datetime('now'), datetime('now'))",
+                       ("LIBRARY002",))
+        
+        # Attachment items need to exist in the items table for the join to work
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 2, 'attachment', 1, datetime('now'), datetime('now'))",
+                       ("ATTACH001",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 2, 'attachment', 1, datetime('now'), datetime('now'))",
+                       ("ATTACH002",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 2, 'attachment', 1, datetime('now'), datetime('now'))",
+                       ("ATTACH003",))
+        
+        # Note items need to exist in the items table for the join to work
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 14, 'note', 1, datetime('now'), datetime('now'))",
+                       ("NOTE001",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 14, 'note', 1, datetime('now'), datetime('now'))",
+                       ("NOTE002",))
+        
+        cursor.execute("INSERT INTO itemDataValues (valueID, value) VALUES (1, 'First Paper')")
+        cursor.execute("INSERT INTO itemDataValues (valueID, value) VALUES (2, 'Second Paper')")
+        cursor.execute("INSERT INTO itemData (itemID, fieldID, valueID) VALUES (1, 1, 1)")
+        cursor.execute("INSERT INTO itemData (itemID, fieldID, valueID) VALUES (2, 1, 2)")
+        
+        cursor.execute("INSERT INTO attachments (itemID, parentItemID, path, filename, contentType, storagePath) VALUES (?, 1, 'storage1/paper1.pdf', 'paper1.pdf', 'application/pdf', 'storage1')",
+                       (3,))
+        cursor.execute("INSERT INTO attachments (itemID, parentItemID, path, filename, contentType, storagePath) VALUES (?, 1, 'storage2/paper2.pdf', 'paper2.pdf', 'application/pdf', 'storage2')",
+                       (4,))
+        cursor.execute("INSERT INTO attachments (itemID, parentItemID, path, filename, contentType, storagePath) VALUES (?, 2, 'storage3/paper3.pdf', 'paper3.pdf', 'application/pdf', 'storage3')",
+                       (5,))
+        
+        cursor.execute("INSERT INTO notes (itemID, parentItemID, note) VALUES (?, 1, 'Note 1')",
+                       (6,))
+        cursor.execute("INSERT INTO notes (itemID, parentItemID, note) VALUES (?, 1, 'Note 2')",
+                       (7,))
+        
+        cursor.execute("INSERT INTO tags (tagID, name) VALUES (1, 'tag1')")
+        cursor.execute("INSERT INTO tags (tagID, name) VALUES (2, 'tag2')")
+        cursor.execute("INSERT INTO tags (tagID, name) VALUES (3, 'tag3')")
+        cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (1, 1, 0)")
+        cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (1, 2, 0)")
+        cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (1, 3, 0)")
+        cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (2, 1, 0)")
+        
+        conn.commit()
+        conn.close()
+        return db_path
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_library_items_without_details(self, mock_db_path, connector, tmp_path):
+        """Test get_library_items returns basic info without details"""
+        db_path = self._create_test_database_for_library(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_library_items(limit=10, include_details=False)
+            assert result["success"] is True
+            items = result["items"]
+            assert len(items) == 2
+            item = items[0]
+            assert "title" in item
+            assert "itemKey" in item
+            assert "attachment_count" not in item
+            assert "tag_count" not in item
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_library_items_with_details(self, mock_db_path, connector, tmp_path):
+        """Test get_library_items includes counts when include_details=True"""
+        db_path = self._create_test_database_for_library(tmp_path)
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_library_items(limit=10, include_details=True)
+            assert result["success"] is True
+            items = result["items"]
+            assert len(items) == 2
+            
+            first_item = items[0]
+            assert "attachment_count" in first_item
+            assert first_item["attachment_count"] == 2
+            assert "note_count" in first_item
+            assert first_item["note_count"] == 2
+            assert "tag_count" in first_item
+            assert first_item["tag_count"] == 3
+            assert "tags" in first_item
+            assert len(first_item["tags"]) == 3
+
+
+class TestPDFTextExtraction:
+    """Test cases for PDF text extraction functionality"""
+
+    @pytest.fixture
+    def connector(self):
+        """Create a ZoteroConnector instance"""
+        return ZoteroConnector()
+
+    def _create_sample_pdf(self, storage_path):
+        """Create a minimal valid PDF file for testing"""
+        pdf_content = b'%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n%%EOF'
+        with open(storage_path, "wb") as f:
+            f.write(pdf_content)
+
+    def _create_test_database_with_attachment(self, tmp_path, storage_dir):
+        """Create a test database with attachment for PDF extraction"""
+        db_path = tmp_path / "test_pdf_extract.sqlite"
+        storage_subdir = storage_dir / "ATTACH001"
+        storage_subdir.mkdir(parents=True, exist_ok=True)
+        
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS items (
+            itemID INTEGER PRIMARY KEY, key TEXT UNIQUE, itemTypeID INTEGER,
+            itemType TEXT, dateAdded TEXT, dateModified TEXT, libraryID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTypes (
+            itemTypeID INTEGER PRIMARY KEY, typeName TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS attachments (
+            itemID INTEGER PRIMARY KEY, parentItemID INTEGER,
+            path TEXT, filename TEXT, contentType TEXT, storagePath TEXT
+        )''')
+        
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (1, 'journalArticle')")
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (2, 'attachment')")
+        
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 1, 'journalArticle', 1, datetime('now'), datetime('now'))",
+                       ("MAINITEM",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 2, 'attachment', 1, datetime('now'), datetime('now'))",
+                       ("ATTACH001",))
+        
+        cursor.execute("INSERT INTO attachments (itemID, parentItemID, filename, contentType, path, storagePath) VALUES (?, 1, 'paper.pdf', 'application/pdf', 'storage/ATTACH001/paper.pdf', 'storage/ATTACH001')",
+                       (2,))
+        
+        conn.commit()
+        conn.close()
+        return db_path
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_pdf_content_success(self, mock_db_path, connector, tmp_path):
+        """Test get_item_pdf_content finds the attachment file"""
+        storage_dir = tmp_path / "storage"
+        db_path = self._create_test_database_with_attachment(tmp_path, storage_dir)
+        mock_db_path.return_value = db_path
+        connector._zotero_storage_dir = storage_dir
+        
+        storage_subdir = storage_dir / "ATTACH001"
+        storage_subdir.mkdir(parents=True, exist_ok=True)
+        
+        # Create a minimal valid PDF
+        pdf_content = b'''%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>
+endobj
+xref
+0 4
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+trailer
+<< /Size 4 /Root 1 0 R >>
+startxref
+208
+%%EOF'''
+        pdf_path = storage_subdir / "ATTACH001.pdf"
+        pdf_path.write_bytes(pdf_content)
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item_pdf_content("MAINITEM")
+            assert result["success"] is True
+            assert "pdf_path" in result
+            assert result["pdf_path"] == str(pdf_path)
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_pdf_content_no_attachment(self, mock_db_path, connector, tmp_path):
+        """Test get_item_pdf_content returns error when no attachment"""
+        db_path = tmp_path / "no_attach.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS items (
+            itemID INTEGER PRIMARY KEY, key TEXT UNIQUE, itemTypeID INTEGER,
+            itemType TEXT, dateAdded TEXT, libraryID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTypes (itemTypeID INTEGER PRIMARY KEY, typeName TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS attachments (
+            itemID INTEGER PRIMARY KEY, parentItemID INTEGER,
+            path TEXT, filename TEXT, contentType TEXT
+        )''')
+        
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (1, 'journalArticle')")
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded) VALUES (?, 1, 'journalArticle', 1, datetime('now'))",
+                       ("NOATTACH",))
+        
+        conn.commit()
+        conn.close()
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item_pdf_content("NOATTACH")
+            assert result["success"] is False
+            assert "No PDF attachment found" in result["error"]
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_pdf_content_file_not_found(self, mock_db_path, connector, tmp_path):
+        """Test get_item_pdf_content returns error when PDF file missing"""
+        storage_dir = tmp_path / "missing_storage"
+        db_path = self._create_test_database_with_attachment(tmp_path, storage_dir)
+        mock_db_path.return_value = db_path
+        connector._zotero_storage_dir = storage_dir
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item_pdf_content("MAINITEM")
+            assert result["success"] is False
+            assert "not found in storage" in result["error"]
+
+
+class TestGetItemFullData:
+    """Test cases for get_item_full_data method"""
+
+    @pytest.fixture
+    def connector(self):
+        """Create a ZoteroConnector instance"""
+        return ZoteroConnector()
+
+    @patch('zotlink.zotero_integration.ZoteroConnector._get_zotero_db_path')
+    def test_get_item_full_data_success(self, mock_db_path, connector, tmp_path):
+        """Test get_item_full_data returns complete item data"""
+        db_path = tmp_path / "full_data.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS items (
+            itemID INTEGER PRIMARY KEY, key TEXT UNIQUE, itemTypeID INTEGER,
+            itemType TEXT, dateAdded TEXT, dateModified TEXT, libraryID INTEGER
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTypes (itemTypeID INTEGER PRIMARY KEY, typeName TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemData (itemID INTEGER, fieldID INTEGER, valueID INTEGER)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS fields (fieldID INTEGER PRIMARY KEY, fieldName TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemDataValues (valueID INTEGER PRIMARY KEY, value TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS creators (creatorID INTEGER PRIMARY KEY, firstName TEXT, lastName TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemCreators (itemID INTEGER, creatorID INTEGER, creatorTypeID INTEGER)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS creatorTypes (creatorTypeID INTEGER PRIMARY KEY, creatorType TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS attachments (
+            itemID INTEGER PRIMARY KEY, parentItemID INTEGER,
+            path TEXT, filename TEXT, contentType TEXT, storagePath TEXT
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS notes (itemID INTEGER PRIMARY KEY, parentItemID INTEGER, note TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS tags (tagID INTEGER PRIMARY KEY, name TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS itemTags (itemID INTEGER, tagID INTEGER, type INTEGER)''')
+        
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (1, 'journalArticle')")
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (2, 'attachment')")
+        cursor.execute("INSERT INTO itemTypes (itemTypeID, typeName) VALUES (14, 'note')")
+        cursor.execute("INSERT INTO creatorTypes (creatorTypeID, creatorType) VALUES (1, 'author')")
+        cursor.execute("INSERT INTO fields (fieldID, fieldName) VALUES (1, 'title')")
+        
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 1, 'journalArticle', 1, datetime('now'), datetime('now'))", ("FULLITEM",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 2, 'attachment', 1, datetime('now'), datetime('now'))", ("ATTACH001",))
+        cursor.execute("INSERT INTO items (key, itemTypeID, itemType, libraryID, dateAdded, dateModified) VALUES (?, 14, 'note', 1, datetime('now'), datetime('now'))", ("NOTE001",))
+        cursor.execute("INSERT INTO itemDataValues (valueID, value) VALUES (1, 'Full Test Title')")
+        cursor.execute("INSERT INTO itemData (itemID, fieldID, valueID) VALUES (1, 1, 1)")
+        cursor.execute("INSERT INTO creators (creatorID, firstName, lastName) VALUES (1, 'John', 'Doe')")
+        cursor.execute("INSERT INTO itemCreators (itemID, creatorID, creatorTypeID) VALUES (1, 1, 1)")
+        cursor.execute("INSERT INTO attachments (itemID, parentItemID, path, filename, contentType, storagePath) VALUES (?, 1, 'storage/test.pdf', 'test.pdf', 'application/pdf', 'storage')", (2,))
+        cursor.execute("INSERT INTO notes (itemID, parentItemID, note) VALUES (?, 1, 'Test note')", (3,))
+        cursor.execute("INSERT INTO tags (tagID, name) VALUES (1, 'test-tag')")
+        cursor.execute("INSERT INTO itemTags (itemID, tagID, type) VALUES (1, 1, 0)")
+        
+        conn.commit()
+        conn.close()
+        mock_db_path.return_value = db_path
+
+        with patch.object(connector, 'is_running', return_value=True):
+            result = connector.get_item_full_data("FULLITEM", include_attachments=True)
+            assert result["success"] is True
+            item = result["item"]
+            assert item["title"] == "Full Test Title"
+            assert len(item["attachments"]) == 1
+            assert len(item["notes"]) == 1
+            assert len(item["tags"]) == 1
+            assert "tags_detail" in item
+
+
+class TestNewMCPTools:
+    """Test cases for new MCP tools"""
+
+    def test_get_item_pdf_text_tool_registered(self):
+        """Test that get_item_pdf_text tool is registered"""
+        from zotlink.zotero_mcp_server import handle_list_tools
+        import asyncio
+        tools = asyncio.run(handle_list_tools())
+        tool_names = [t.name for t in tools]
+        assert "get_item_pdf_text" in tool_names
+
+    def test_get_item_pdf_text_tool_schema(self):
+        """Test get_item_pdf_text tool has correct input schema"""
+        from zotlink.zotero_mcp_server import handle_list_tools
+        import asyncio
+        tools = asyncio.run(handle_list_tools())
+        for tool in tools:
+            if tool.name == "get_item_pdf_text":
+                schema = tool.inputSchema
+                assert "item_key" in schema["required"]
+                assert "properties" in schema
+                assert schema["properties"]["item_key"]["type"] == "string"
+
+    def test_get_library_items_include_details_param(self):
+        """Test get_library_items tool accepts include_details parameter"""
+        from zotlink.zotero_mcp_server import handle_list_tools
+        import asyncio
+        tools = asyncio.run(handle_list_tools())
+        for tool in tools:
+            if tool.name == "get_library_items":
+                schema = tool.inputSchema
+                assert "include_details" in schema["properties"]
+                assert schema["properties"]["include_details"]["type"] == "boolean"
+
+    def test_get_zotero_item_include_attachments_param(self):
+        """Test get_zotero_item tool accepts include_attachments parameter"""
+        from zotlink.zotero_mcp_server import handle_list_tools
+        import asyncio
+        tools = asyncio.run(handle_list_tools())
+        for tool in tools:
+            if tool.name == "get_zotero_item":
+                schema = tool.inputSchema
+                assert "include_attachments" in schema["properties"]
+                assert schema["properties"]["include_attachments"]["type"] == "boolean"

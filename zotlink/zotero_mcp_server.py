@@ -178,7 +178,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_library_items",
-            description="Get items from your Zotero library with pagination support",
+            description="Get items from your Zotero library with pagination support. Optionally includes attachments, notes, and tags.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -189,6 +189,10 @@ async def handle_list_tools() -> list[types.Tool]:
                     "offset": {
                         "type": "integer",
                         "description": "Offset for pagination (default: 0)"
+                    },
+                    "include_details": {
+                        "type": "boolean",
+                        "description": "Include attachment count, note count, and tags for each item (default: false)"
                     }
                 },
                 "required": []
@@ -210,13 +214,17 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_zotero_item",
-            description="Get detailed information about a specific Zotero item by its key",
+            description="Get detailed information about a specific Zotero item by its key. Optionally includes attachments, notes, and tags.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "item_key": {
                         "type": "string",
                         "description": "The Zotero item key"
+                    },
+                    "include_attachments": {
+                        "type": "boolean",
+                        "description": "Include attachments, notes, and tags in response (default: true)"
                     }
                 },
                 "required": ["item_key"]
@@ -371,6 +379,20 @@ async def handle_list_tools() -> list[types.Tool]:
                     "save_to_zotero": {
                         "type": "boolean",
                         "description": "If True, save the fetched PDF as an attachment to the Zotero item (default: True)"
+                    }
+                },
+                "required": ["item_key"]
+            }
+        ),
+        types.Tool(
+            name="get_item_pdf_text",
+            description="Extract text from an attached PDF in Zotero for full-text search and analysis",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "item_key": {
+                        "type": "string",
+                        "description": "The Zotero item key to extract PDF text from"
                     }
                 },
                 "required": ["item_key"]
@@ -763,12 +785,18 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
     elif name == "get_library_items":
         limit = arguments.get("limit", 50)
         offset = arguments.get("offset", 0)
+        include_details = arguments.get("include_details", False)
         
         if not zotero_connector.is_running():
             return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
         
         try:
-            items = zotero_connector.get_library_items(limit=limit, offset=offset)
+            result = zotero_connector.get_library_items(limit=limit, offset=offset, include_details=include_details)
+            
+            if not result.get("success"):
+                return [types.TextContent(type="text", text=f"Error: {result.get('error', 'Unknown error')}")]
+            
+            items = result.get("items", [])
             
             if not items:
                 message = "Your library is empty or no more items\n\n"
@@ -780,14 +808,38 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             for i, item in enumerate(items, 1):
                 title = item.get('title', 'Untitled')
                 item_type = item.get('itemType', 'Unknown')
-                date = item.get('date', 'No date')
-                key = item.get('key', 'No key')
+                date_added = item.get('dateAdded', 'No date')[:10] if item.get('dateAdded') else 'No date'
+                key = item.get('itemKey', 'No key')
                 
                 message += f"{i}. {title}\n"
-                message += f"   Type: {item_type} | Date: {date}\n"
-                message += f"   Key: {key}\n\n"
+                message += f"   Type: {item_type} | Added: {date_added}\n"
+                message += f"   Key: {key}"
+                
+                if include_details:
+                    attachment_count = item.get('attachment_count', 0)
+                    note_count = item.get('note_count', 0)
+                    tag_count = item.get('tag_count', 0)
+                    tags = item.get('tags', [])
+                    
+                    details_parts = []
+                    if attachment_count > 0:
+                        details_parts.append(f"{attachment_count} attachments")
+                    if note_count > 0:
+                        details_parts.append(f"{note_count} notes")
+                    if tag_count > 0:
+                        details_parts.append(f"{tag_count} tags")
+                    
+                    if details_parts:
+                        message += f" | {', '.join(details_parts)}"
+                    
+                    if tags:
+                        message += f"\n   Tags: {', '.join(tags[:5])}"
+                        if tag_count > 5:
+                            message += f" +{tag_count - 5} more"
+                
+                message += "\n\n"
             
-            message += f"Use get_zotero_item with a specific key for details"
+            message += f"Use get_zotero_item with a specific key for full details"
             
             return [types.TextContent(type="text", text=message)]
             
@@ -832,6 +884,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
     
     elif name == "get_zotero_item":
         item_key = arguments.get("item_key", "").strip()
+        include_attachments = arguments.get("include_attachments", True)
         
         if not item_key:
             return [types.TextContent(type="text", text="Missing item key")]
@@ -840,10 +893,12 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
         
         try:
-            item = zotero_connector.get_item(item_key)
+            result = zotero_connector.get_item(item_key, include_attachments=include_attachments)
             
-            if not item:
+            if not result.get("success"):
                 return [types.TextContent(type="text", text=f"Item not found: {item_key}")]
+            
+            item = result.get("item", {})
             
             title = item.get('title', 'Untitled')
             item_type = item.get('itemType', 'Unknown')
@@ -851,6 +906,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             url = item.get('url', 'No URL')
             abstract = item.get('abstractNote', 'No abstract')
             creators = item.get('creators', [])
+            attachments = item.get('attachments', [])
+            notes = item.get('notes', [])
+            tags = item.get('tags', [])
             
             message = f"Zotero Item Details\n\n"
             message += f"Title: {title}\n"
@@ -868,8 +926,29 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                     message += f"Authors: {', '.join(authors)}\n"
             
             if abstract and abstract != 'No abstract':
-                abstract_preview = abstract[:300] + "..." if len(abstract) > 300 else abstract
+                abstract_preview = abstract[:500] + "..." if len(abstract) > 500 else abstract
                 message += f"\nAbstract:\n{abstract_preview}\n"
+            
+            if include_attachments:
+                if attachments:
+                    message += f"\nAttachments ({len(attachments)}):\n"
+                    for att in attachments[:5]:
+                        filename = att.get('filename', 'Unknown')
+                        content_type = att.get('contentType', 'Unknown')
+                        message += f"  - {filename} ({content_type})\n"
+                    if len(attachments) > 5:
+                        message += f"  ... and {len(attachments) - 5} more\n"
+                
+                if notes:
+                    message += f"\nNotes ({len(notes)}):\n"
+                    for note in notes[:3]:
+                        note_text = note.get('note', '')[:100]
+                        message += f"  - {note_text}...\n"
+                    if len(notes) > 3:
+                        message += f"  ... and {len(notes) - 3} more\n"
+                
+                if tags:
+                    message += f"\nTags: {', '.join(tags)}\n"
             
             message += f"\nKey: {item_key}"
             
@@ -1257,6 +1336,68 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
         except Exception as e:
             logger.error(f"Failed to fetch PDF: {e}")
             return [types.TextContent(type="text", text=f"Error fetching PDF: {e}")]
+    
+    elif name == "get_item_pdf_text":
+        item_key = arguments.get("item_key", "").strip()
+        
+        if not item_key:
+            return [types.TextContent(type="text", text="Missing item key")]
+        
+        if not zotero_connector.is_running():
+            return [types.TextContent(type="text", text="Zotero unavailable. Please start Zotero desktop app")]
+        
+        try:
+            result = zotero_connector.get_item_pdf_content(item_key)
+            
+            if not result.get("success"):
+                error_msg = result.get("error", "Unknown error")
+                message = f"Failed to extract PDF text: {error_msg}\n\n"
+                
+                if "not found" in error_msg.lower():
+                    message += f"Possible causes:\n"
+                    message += f"  Item does not exist\n"
+                    message += f"  Item key is incorrect\n\n"
+                    message += f"Suggestions:\n"
+                    message += f"  Use get_library_items to list available items\n"
+                    message += f"  Copy the correct item key"
+                elif "no pdf" in error_msg.lower():
+                    message += f"Possible causes:\n"
+                    message += f"  Item has no PDF attachment\n"
+                    message += f"  PDF is stored remotely\n\n"
+                    message += f"Suggestions:\n"
+                    message += f"  Use fetch_pdf to download a PDF\n"
+                    message += f"  Check if PDF is synced locally"
+                else:
+                    message += f"PDF may not be synced locally.\n"
+                    message += f"Open Zotero and ensure the item is synced."
+                
+                return [types.TextContent(type="text", text=message)]
+            
+            title = result.get("title", "Untitled")
+            page_count = result.get("page_count", 0)
+            char_count = result.get("character_count", 0)
+            text = result.get("text", "")
+            
+            message = f"PDF Text Extracted\n\n"
+            message += f"Item: {title}\n"
+            message += f"Pages: {page_count}\n"
+            message += f"Characters: {char_count:,}\n\n"
+            
+            if text:
+                text_preview = text[:2000] + "..." if len(text) > 2000 else text
+                message += f"Text Preview:\n{text_preview}\n"
+                
+                message += f"\nFull text available for full-text search.\n"
+                message += f"Use get_item_pdf_text to extract text from other items."
+            else:
+                message += f"No text could be extracted from the PDF.\n"
+                message += f"The PDF may be scanned images without OCR."
+            
+            return [types.TextContent(type="text", text=message)]
+            
+        except Exception as e:
+            logger.error(f"Failed to extract PDF text: {e}")
+            return [types.TextContent(type="text", text=f"Error extracting PDF text: {e}")]
     
     else:
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
